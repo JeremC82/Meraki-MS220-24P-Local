@@ -40,8 +40,8 @@ st=$(mktemp -d); trap 'rm -rf "$st"' EXIT
 if [ $UI = 1 ]; then
     mkdir -p "$st/etc/switchui" "$st/etc/init.d"
     cp -a "$here/switchui/bin" "$here/switchui/lib" "$here/switchui/sbin" "$here/switchui/www" "$st/etc/switchui/"
-    cp "$here/switchui/init/S95switchui" "$st/etc/init.d/S95switchui"
-    chmod 755 "$st/etc/switchui/bin/"* "$st/etc/switchui/sbin/"* "$st/etc/switchui/www/cgi-bin/"* "$st/etc/init.d/S95switchui"
+    cp "$here/switchui/init/"* "$st/etc/init.d/"
+    chmod 755 "$st/etc/switchui/bin/"* "$st/etc/switchui/sbin/"* "$st/etc/switchui/www/cgi-bin/"* "$st/etc/init.d/"*
 fi
 [ -n "$EXTRA" ] && { mkdir -p "$st/etc"; cp -a "$EXTRA/." "$st/etc/"; }
 if [ -n "$KERNEL" ]; then

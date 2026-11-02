@@ -34,6 +34,7 @@
     <div class="card kpi"><label>Débit entrant</label><b id="k-rx" class="in">–</b><small id="k-rx2">reçu par le switch</small></div>
     <div class="card kpi"><label>Débit sortant</label><b id="k-tx" class="out">–</b><small id="k-tx2">envoyé par le switch</small></div>
     <div class="card kpi"><label>PoE consommé</label><b id="k-poe">–</b><small id="k-poe2"></small></div>
+    <div class="card kpi"><label>Consommation totale</label><b id="k-total">–</b><small id="k-total2"></small></div>
     <div class="card kpi"><label>Température PoE</label><b id="k-temp">–</b><small id="k-volt"></small></div>
     <div class="card kpi"><label>Ventilateur</label><b id="k-fan">–</b><small id="k-fan2"></small></div>
     <div class="card kpi"><label>Charge CPU</label><b id="k-load">–</b><small id="k-mem"></small></div>
@@ -87,6 +88,12 @@
     <div class="card kpi"><label>Tension</label><b id="p-volt">–</b></div>
     <div class="card kpi"><label>Température</label><b id="p-temp">–</b></div>
     <div class="card kpi"><label>Ports alimentés</label><b id="p-n">–</b></div>
+    <div class="card kpi"><label>Consommation totale</label><b id="p-total">–</b><small>estimée, au secteur</small></div>
+  </div>
+  <div class="card">
+    <h3>Consommation du switch</h3>
+    <div class="row"><label class="hint">Consommation à vide (W, mesurée sans appareil PoE)</label><input id="p-base" type="number" min="1" max="300" style="width:90px"><button class="btn pri" id="p-base-save">Enregistrer</button></div>
+    <p class="hint">Estimation = consommation à vide + puissance PoE délivrée ÷ 0,9 (rendement supposé de l'alimentation). Le switch ne mesure pas sa consommation au secteur : pour la mesurer, utilisez une prise wattmètre.</p>
   </div>
   <div class="card">
     <h3>Puissance PoE
@@ -208,6 +215,7 @@
       <label>Priorité Spanning Tree (RSTP)<select id="s-stp"></select></label>
       <label class="chk"><input type="checkbox" id="s-lldp"> LLDP (découverte des voisins)</label>
       <label class="chk"><input type="checkbox" id="s-igmp"> IGMP snooping (multicast)</label>
+      <label class="chk"><input type="checkbox" id="s-chaser"> Chenillard des LED pendant le démarrage</label>
     </div>
     <button class="btn pri" id="s-save">Enregistrer et appliquer</button>
   </div>

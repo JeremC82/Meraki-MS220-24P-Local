@@ -31,12 +31,13 @@ This project builds on Hal Martin's work ([meraki-builder](https://github.com/ha
 10. [SNMP](#10-snmp)
 11. [Reset button](#11-reset-button)
 12. [Cooling](#12-cooling)
-13. [SSH access](#13-ssh-access)
-14. [Going back to the Meraki firmware](#14-going-back-to-the-meraki-firmware)
-15. [Troubleshooting](#15-troubleshooting)
-16. [How it works](#16-how-it-works)
-17. [Repository layout](#17-repository-layout)
-18. [Credits and licences](#18-credits-and-licences)
+13. [Front LEDs and power estimate](#13-front-leds-and-power-estimate)
+14. [SSH access](#14-ssh-access)
+15. [Going back to the Meraki firmware](#15-going-back-to-the-meraki-firmware)
+16. [Troubleshooting](#16-troubleshooting)
+17. [How it works](#17-how-it-works)
+18. [Repository layout](#18-repository-layout)
+19. [Credits and licences](#19-credits-and-licences)
 
 ---
 
@@ -57,6 +58,8 @@ This project builds on Hal Martin's work ([meraki-builder](https://github.com/ha
 | Monitoring | traffic per port, PoE, temperatures, fan, 1 h and 24 h history |
 | SNMP | read-only agent: IF-MIB (24 ports, 64-bit counters) and POWER-ETHERNET-MIB |
 | Cooling | temperature-driven fan control, with presets |
+| Power | total wall power estimate (measured idle power + PoE) |
+| Front LEDs | green/orange chaser on the 24 ports and the SFP cages during boot (can be turned off) |
 | Administration | DHCP or static address, name, password, configuration backup and restore |
 | Updates | `.msu` packages uploaded from the interface (interface and/or kernel) |
 | Reset button | held 10 s: back to the default configuration |
@@ -179,7 +182,7 @@ Tips:
 
 ### Option A: prebuilt image
 
-`release/switch-local-1.5.0.bin.gz` is the image produced by `./build.sh` from this repository (interface 1.5.0, kernel 3.18.131-meraki). Check it before writing it:
+`release/switch-local-1.5.0.bin.gz` is the image produced by `./build.sh` from this repository (interface 1.5.0, kernel 3.18.131-meraki). Later interface versions are installed on top of it with an update package (see [Updates](#9-updates)). Check it before writing it:
 
 ```sh
 gunzip -k release/switch-local-1.5.0.bin.gz
@@ -401,7 +404,25 @@ The minimum speed is **30 %**: below that, the fan may stall. **Permanent safety
 
 ---
 
-## 13. SSH access
+## 13. Front LEDs and power estimate
+
+**LED chaser.** While the switch finishes booting (from the moment the switching chip driver is ready until the web interface is up, about 30 to 40 seconds), the port LEDs run a chaser: a green head with an orange trail going right, then the colours swapped going back, and the 4 SFP cages flashing at each end. Then the LEDs go back to showing link and PoE. Turn it off in **System → Switch features**.
+
+The port LEDs are driven by the chip's serial GPIO (SIO), active low, through the `sw0_ctrl/symreg_write` Click handler (`REG, VALUE`) with `led_mode` set to `off`:
+
+| Register | LEDs |
+|---|---|
+| `DEVCPU_GCB:SIO_CTRL:SIO_PORT_CONFIG[0]` … `[23]` | RJ45 ports 1 to 24, in order |
+| bit 0 cleared (`0x248`) | RJ45 port **orange** |
+| bit 1 cleared (`0x241`) | RJ45 port **green** |
+| `0x249` / `0x000` | off / both |
+| `SIO_PORT_CONFIG[24]` … `[29]` | the 4 SFP cages (mixed wiring) |
+
+`echo link > /click/sw0_ctrl/led_mode` hands the LEDs back to the driver.
+
+**Power estimate.** The switch cannot measure its own wall power (no PMBus power supply). The interface shows an estimate: **idle power + delivered PoE power ÷ 0.9** (assumed power supply efficiency). The idle power defaults to **24 W**, measured with a plug-in power meter on the test MS220-24P with no PoE device; set your own value in the **PoE** tab.
+
+## 14. SSH access
 
 - Command: `ssh root@SWITCH_ADDRESS`.
 - Password: **the serial number** (set at first boot by meraki-builder's `S14passwd`).
@@ -421,7 +442,7 @@ cat /tmp/sui/actions.log                         # actions done from the interfa
 
 ---
 
-## 14. Going back to the Meraki firmware
+## 15. Going back to the Meraki firmware
 
 Desolder the chip and write the original backup:
 
@@ -434,7 +455,7 @@ Solder the chip back: the switch boots exactly as before, since the NAND was nev
 
 ---
 
-## 15. Troubleshooting
+## 16. Troubleshooting
 
 | Symptom | Likely cause and fix |
 |---|---|
@@ -459,7 +480,7 @@ The Meraki modules only load into a kernel **built exactly like Meraki's**. If y
 
 ---
 
-## 16. How it works
+## 17. How it works
 
 **Boot sequence**
 1. RedBoot (`redboot-nocrc-sz`) loads the `SPIM` header at `0x40000`, then decompresses and starts the kernel at `0x81000000`.
@@ -471,7 +492,7 @@ The Meraki modules only load into a kernel **built exactly like Meraki's**. If y
    - copies the interface to `/etc/switchui` at first boot;
    - sets up DNS and NTP sync;
    - applies the saved configuration again;
-   - starts the history collector, the fan controller, the reset button watcher, the SNMP agent and the web server.
+   - starts the history collector, the fan controller, the reset button watcher, the SNMP agent and the web server, then stops the LED chaser started by `S09zchaser`.
 
 **Why a modified 3.18.131 kernel.** Meraki only published the 3.18.123 sources. The 2023 firmware modules require:
 
@@ -498,7 +519,7 @@ The pages are plain HTML, CSS and JavaScript with no external dependency, and th
 
 ---
 
-## 17. Repository layout
+## 18. Repository layout
 
 ```
 build.sh                         full image build
@@ -509,6 +530,7 @@ switchui/                        web interface (installed in /etc/switchui)
   sbin/sui-fan                   fan control
   sbin/sui-button                reset button
   sbin/sui-snmp, sui-snmp-table  SNMP data for the ports
+  init/S09zchaser                LED chaser during boot
   init/S95switchui               interface startup
   bin/httpd                      web server (busybox, see firmware/httpd)
 extras/switchui-snmp/            SNMP agent for updating already installed switches
@@ -524,7 +546,7 @@ docs/                            photos and screenshots
 
 ---
 
-## 18. Credits and licences
+## 19. Credits and licences
 
 - **Hal Martin**: [meraki-builder](https://github.com/halmartin/meraki-builder) (GPL v3), the modified RedBoot and the mirrors of the Meraki GPL sources ([switch-11-22-ms220](https://github.com/halmartin/switch-11-22-ms220), [MS42-GPL-sources-3-18-122](https://github.com/halmartin/MS42-GPL-sources-3-18-122)). This project would not exist without that work.
 - Linux kernel, buildroot, busybox: GPL v2. net-snmp: BSD licences.

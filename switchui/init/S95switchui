@@ -39,6 +39,7 @@ start() {
     start-stop-daemon -S -b -m -p /var/run/sui-fan.pid -x $SUI/sbin/sui-fan
     start-stop-daemon -S -b -m -p /var/run/sui-button.pid -x $SUI/sbin/sui-button
     $SUI/bin/httpd -p 80 -h $SUI/www -c $SUI/httpd.conf -r "Administration du switch"
+    touch $SUI_RUN/boot_done            # arrête le chenillard des LED (S09zchaser)
     echo "switchui: http://$(awk -F= '/^ip=/{print $2}' /click/uplinkstate/dhcpc_state_for_brain)/"
 }
 

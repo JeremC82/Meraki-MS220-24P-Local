@@ -1,0 +1,67 @@
+#!/bin/sh
+#
+# Chenillard sur les LED des ports pendant la fin du démarrage : dès que le
+# pilote de la puce est prêt (après S09clickinit) et jusqu'à ce que
+# l'interface web soit prête (S95switchui crée /tmp/sui/boot_done).
+# Désactivable : LED_CHASER='0' dans /etc/switchui/system.conf.
+#
+# LED des ports (registres SIO de la puce, actives à 0) :
+#   SIO_PORT_CONFIG[0..23] = ports RJ45 1 à 24 ; bit 0 à 0 : orange, bit 1 à 0 : vert
+#   SIO_PORT_CONFIG[24..29] = les 4 cages SFP (allumées ensemble)
+CTRL=/click/sw0_ctrl
+OFF=0x249; GREEN=0x241; ORANGE=0x248; BOTH=0x000
+
+start() {
+    [ -w $CTRL/symreg_write ] || exit 0
+    grep -q "^LED_CHASER='0'" /etc/switchui/system.conf 2>/dev/null && exit 0
+    rm -f /tmp/sui/boot_done
+    (
+        set_led() { echo "DEVCPU_GCB:SIO_CTRL:SIO_PORT_CONFIG[$1], $2" > $CTRL/symreg_write; }
+        sfp() { for i in 24 25 26 27 28 29; do set_led $i $1; done; }
+        done_() { [ -f /tmp/sui/boot_done ]; }
+        echo off > $CTRL/led_mode
+        for i in $(seq 0 29); do set_led $i $OFF; done
+        n=0
+        while ! done_ && [ $n -lt 40 ]; do               # 40 passages au plus (sécurité)
+            # aller : tête verte, traînée orange
+            prev=""
+            for i in $(seq 0 23); do
+                set_led $i $GREEN
+                [ -n "$prev" ] && set_led $prev $ORANGE
+                [ -n "$pp" ] && set_led $pp $OFF
+                pp=$prev; prev=$i
+                done_ && break 2
+            done
+            set_led $pp $OFF; set_led $prev $OFF; pp=""
+            sfp $GREEN; usleep 150000; sfp $ORANGE; usleep 150000; sfp $OFF
+            # retour : tête orange, traînée verte
+            prev=""
+            for i in $(seq 23 -1 0); do
+                set_led $i $ORANGE
+                [ -n "$prev" ] && set_led $prev $GREEN
+                [ -n "$pp" ] && set_led $pp $OFF
+                pp=$prev; prev=$i
+                done_ && break 2
+            done
+            set_led $pp $OFF; set_led $prev $OFF; pp=""
+            sfp $ORANGE; usleep 150000; sfp $GREEN; usleep 150000; sfp $OFF
+            n=$((n + 1))
+        done
+        # fin : tout s'allume un instant, puis les LED reviennent au pilote
+        for i in $(seq 0 29); do set_led $i $BOTH; done
+        usleep 400000
+        echo link > $CTRL/led_mode
+    ) >/dev/null 2>&1 &
+    echo $! > /var/run/sui-chaser.pid
+}
+
+stop() {
+    mkdir -p /tmp/sui; touch /tmp/sui/boot_done
+    [ -d $CTRL ] && echo link > $CTRL/led_mode
+}
+
+case "$1" in
+    start) start ;;
+    stop) stop ;;
+    *) echo "Usage: $0 {start|stop}"; exit 1 ;;
+esac

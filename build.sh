@@ -57,7 +57,7 @@ cp "$W/kernel/assoc_stub.ko" "$OV/lib/modules/assoc_stub.ko"
 rm -rf "$OV/usr/share/switchui"; mkdir -p "$OV/usr/share/switchui"
 cp -a "$R/switchui/lib" "$R/switchui/sbin" "$R/switchui/www" "$R/switchui/VERSION" "$OV/usr/share/switchui/"
 mkdir -p "$OV/usr/share/switchui/bin" && cp "$W/httpd/httpd" "$OV/usr/share/switchui/bin/httpd"
-cp "$R/switchui/init/S95switchui" "$OV/etc/init.d/S95switchui"
+cp "$R/switchui/init/"* "$OV/etc/init.d/"
 chmod 755 "$OV/usr/bin/find_hdr" "$OV/usr/share/switchui/bin/"* "$OV/usr/share/switchui/sbin/"* \
           "$OV/usr/share/switchui/www/cgi-bin/"* "$OV/etc/init.d/"*
 

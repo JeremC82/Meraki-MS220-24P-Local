@@ -38,6 +38,9 @@ function fmtDur(s) {
 }
 const speedTxt = p => !p.link ? '—' : p.mbps >= 1000 ? '1 Gb/s' : p.mbps + ' Mb/s';
 const isCombo = p => /Prefer/.test(p.media || '');
+// consommation au secteur estimée : switch à vide (mesuré) + PoE délivré / rendement de l'alimentation (0,9 supposé)
+const PSU_EFF = 0.9;
+const totalW = s => (s.base_w || 24) + (s.poe_total || 0) / PSU_EFF;
 const hasSfp = p => !!p.sfp;
 // support réellement utilisé par un port combo : la puce privilégie le cuivre
 const mediaTxt = p => !isCombo(p) ? 'RJ45' : hasSfp(p) ? 'module SFP inséré (cuivre prioritaire si un câble RJ45 est aussi branché)' : 'RJ45 (cage SFP vide)';
@@ -127,6 +130,8 @@ function renderDash() {
     $('#k-tx2').textContent = 'max. 1 h : ' + fmtBps(Math.max(...rs1.map(x => sum(x.tx))));
   }
   $('#k-poe').textContent = POE ? s.poe_total.toFixed(1) + ' W' : 'n/a';
+  $('#k-total').textContent = '≈ ' + totalW(s).toFixed(0) + ' W';
+  $('#k-total2').textContent = `estimée : ${s.base_w} W à vide + PoE`;
   $('#k-poe2').textContent = POE ? `${ps.filter(p => p.poe_w > 0).length} appareil(s) alimenté(s)` : '';
   $('#k-temp').textContent = s.poe_temp != null ? s.poe_temp.toFixed(1) + ' °C' : '–';
   $('#k-volt').textContent = s.poe_volt != null ? s.poe_volt + ' V' : '';
@@ -202,6 +207,8 @@ function renderPoe() {
   $('#p-volt').textContent = s.poe_volt != null ? s.poe_volt + ' V' : '–';
   $('#p-temp').textContent = s.poe_temp != null ? s.poe_temp.toFixed(1) + ' °C' : '–';
   $('#p-n').textContent = ST.ports.filter(p => p.poe_w > 0).length;
+  $('#p-total').textContent = '≈ ' + totalW(s).toFixed(0) + ' W';
+  if (document.activeElement !== $('#p-base')) $('#p-base').value = s.base_w;
   $('#t-poe').innerHTML = '<tr><th>Port</th><th>Nom</th><th>PoE</th><th>Norme</th><th>Priorité</th><th>Consommation</th><th></th></tr>' +
     ST.ports.map(p => `<tr><td>${p.port}</td><td>${esc(p.name)}</td>
       <td>${p.poe_on ? '<span class="badge ok">activé</span>' : '<span class="badge bad">coupé</span>'}</td><td>802.3${p.poe_type}</td><td>${p.poe_prio}</td>
@@ -291,7 +298,7 @@ function fillSystemForm() {
   $('#s-ip').value = c.IP_ADDR || ST.system.ip; $('#s-mask').value = c.IP_MASK || ST.system.mask;
   $('#s-gw').value = c.IP_GW || ST.system.gw; $('#s-dns').value = c.IP_DNS || ST.system.dns; $('#s-vlan').value = c.MGMT_VLAN || 1;
   const sp = $('#s-stp'); sp.innerHTML = Array.from({ length: 16 }, (_, i) => `<option value="${i * 4096}">${i * 4096}${i * 4096 === 32768 ? ' (défaut)' : ''}</option>`).join('');
-  sp.value = c.STP_PRIO || 61440; $('#s-lldp').checked = c.LLDP === '1'; $('#s-igmp').checked = c.IGMP === '1';
+  sp.value = c.STP_PRIO || 61440; $('#s-lldp').checked = c.LLDP === '1'; $('#s-igmp').checked = c.IGMP === '1'; $('#s-chaser').checked = c.LED_CHASER !== '0';
   $('#sn-on').checked = c.SNMP === '1'; $('#sn-com').value = c.SNMP_COMMUNITY || 'public'; $('#sn-allow').value = c.SNMP_ALLOW || 'default';
   $('#sn-loc').value = c.SNMP_LOCATION || ''; $('#sn-contact').value = c.SNMP_CONTACT || '';
   $('#mi-dest').value = c.MIRROR_DEST || 0; $('#mi-in').value = c.MIRROR_IN || ''; $('#mi-out').value = c.MIRROR_OUT || '';
@@ -415,7 +422,7 @@ async function showVeriphy(p) {
 async function saveSystem(extra = {}) {
   const d = {
     HOSTNAME: $('#s-host').value, IP_MODE: $('#s-mode').value, IP_ADDR: $('#s-ip').value, IP_MASK: $('#s-mask').value, IP_GW: $('#s-gw').value,
-    IP_DNS: $('#s-dns').value, MGMT_VLAN: $('#s-vlan').value, STP_PRIO: $('#s-stp').value, LLDP: $('#s-lldp').checked ? 1 : 0, IGMP: $('#s-igmp').checked ? 1 : 0,
+    IP_DNS: $('#s-dns').value, MGMT_VLAN: $('#s-vlan').value, STP_PRIO: $('#s-stp').value, LLDP: $('#s-lldp').checked ? 1 : 0, IGMP: $('#s-igmp').checked ? 1 : 0, LED_CHASER: $('#s-chaser').checked ? 1 : 0,
     MIRROR_DEST: $('#mi-dest').value, MIRROR_IN: $('#mi-in').value.replace(/\s/g, ''), MIRROR_OUT: $('#mi-out').value.replace(/\s/g, ''), ...extra
   };
   if (d.IP_MODE === 'static' && d.IP_ADDR !== ST.system.ip && !confirm(`L'adresse va passer à ${d.IP_ADDR}. Vous devrez ouvrir http://${d.IP_ADDR}/ ensuite. Continuer ?`)) return;
@@ -440,6 +447,11 @@ $('#r-file').onchange = async e => {
 $('#b-reboot').onclick = async () => {
   if (!confirm('Redémarrer le switch ? Le réseau sera coupé environ 3 minutes.')) return;
   await post('reboot'); toast('Redémarrage en cours…'); $('#h-dot').className = 'dot bad';
+};
+$('#p-base-save').onclick = async () => {
+  const v = +$('#p-base').value;
+  if (!(v >= 1 && v <= 300)) return toast('Valeur entre 1 et 300 W', true);
+  try { await post('set_system', { BASE_POWER_W: v }); toast('Consommation à vide enregistrée'); CFG = await get('config'); refresh(); } catch (e) { toast(e.message, true); }
 };
 // ---------- ventilation ----------
 const FAN_PRESETS = [

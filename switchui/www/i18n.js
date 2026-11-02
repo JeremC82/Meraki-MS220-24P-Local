@@ -37,7 +37,12 @@ const EN = {
     'U = untagged (native VLAN) · T = tagged (trunk) · – = not a member. To change it, configure the port in the Ports tab.',
   // PoE
   'Consommation': 'Power draw', 'budget 370 W': '370 W budget', 'Tension': 'Voltage', 'Température': 'Temperature',
-  'Ports alimentés': 'Powered ports', 'Ports PoE': 'PoE ports', 'Norme': 'Standard', 'Priorité': 'Priority',
+  'Ports alimentés': 'Powered ports', 'Consommation totale': 'Total power', 'estimée, au secteur': 'estimated, at the wall',
+  'Consommation du switch': 'Switch power draw', 'Consommation à vide (W, mesurée sans appareil PoE)': 'Idle power (W, measured with no PoE device)',
+  "Estimation = consommation à vide + puissance PoE délivrée ÷ 0,9 (rendement supposé de l'alimentation). Le switch ne mesure pas sa consommation au secteur : pour la mesurer, utilisez une prise wattmètre.":
+    'Estimate = idle power + delivered PoE power ÷ 0.9 (assumed power supply efficiency). The switch does not measure its wall power: use a plug-in power meter to measure it.',
+  'Consommation à vide enregistrée': 'Idle power saved', 'Valeur entre 1 et 300 W': 'Value between 1 and 300 W',
+  'Chenillard des LED pendant le démarrage': 'LED chaser during boot', 'Ports PoE': 'PoE ports', 'Norme': 'Standard', 'Priorité': 'Priority',
   'Couper': 'Turn off', 'Activer': 'Turn on', 'Redémarrer': 'Power cycle', 'Total du switch': 'Switch total',
   'Une courbe par appareil': 'One curve per device', 'Ce modèle ne gère pas le PoE.': 'This model has no PoE.',
   'Total (W)': 'Total (W)', 'PoE total (W)': 'PoE total (W)', 'PoE (W)': 'PoE (W)', 'Aucun appareil alimenté': 'No powered device',
@@ -155,6 +160,7 @@ const EN = {
 // texts containing values
 const EN_RULES = [
   [/^(\d+) appareil\(s\) alimenté\(s\)$/, '$1 powered device(s)'],
+  [/^estimée : (\d+) W à vide \+ PoE$/, 'estimated: $1 W idle + PoE'],
   [/^(\d+) en 1 Gb\/s$/, '$1 at 1 Gb/s'],
   [/^(\d+) adresse\(s\)$/, '$1 address(es)'],
   [/^max\. 1 h : (.+)$/, '1 h max: $1'],
