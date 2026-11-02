@@ -12,8 +12,9 @@ BRV=2023.02.4
 BR=$W/buildroot-$BRV
 MB_REPO=https://github.com/halmartin/meraki-builder.git
 MB_COMMIT=863800b542392e1153a01af601b4173ca828a1c6
-# options pour compiler les outils hôte anciens avec un gcc récent (11 et plus)
-HOSTFLAGS="-O2 -Wno-error=incompatible-pointer-types -Wno-error=implicit-function-declaration -Wno-error=int-conversion"
+# options pour compiler les outils hôte anciens avec un gcc récent (11 et plus) ;
+# -I…/host/include est l'option que buildroot met par défaut dans HOST_CFLAGS
+HOSTFLAGS="-O2 -I$BR/output/host/include -Wno-error=incompatible-pointer-types -Wno-error=implicit-function-declaration -Wno-error=int-conversion"
 
 step() { echo; echo "===== $*"; }
 
@@ -39,7 +40,7 @@ cp "$R/firmware/rootfs/buildroot.config" "$BR/.config"
 make -C "$BR" olddefconfig >/dev/null
 
 step "2/7 chaîne de compilation et système (long)"
-make -C "$BR" HOST_CFLAGS="$HOSTFLAGS" || true     # post-image.sh de meraki-builder échoue sans conséquence
+make -C "$BR" HOST_CFLAGS="$HOSTFLAGS"
 HOST=$BR/output/host
 [ -x "$HOST/bin/mipsel-linux-gcc" ] || { echo "la chaîne de compilation n'a pas été construite"; exit 1; }
 
@@ -61,7 +62,7 @@ chmod 755 "$OV/usr/bin/find_hdr" "$OV/usr/share/switchui/bin/"* "$OV/usr/share/s
           "$OV/usr/share/switchui/www/cgi-bin/"* "$OV/etc/init.d/"*
 
 step "6/7 système de fichiers final"
-make -C "$BR" HOST_CFLAGS="$HOSTFLAGS" || true
+make -C "$BR" HOST_CFLAGS="$HOSTFLAGS"
 [ -s "$BR/output/images/rootfs.squashfs" ] || { echo "rootfs.squashfs absent"; exit 1; }
 
 step "7/7 image de la puce"

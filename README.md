@@ -85,7 +85,7 @@ This project builds on Hal Martin's work ([meraki-builder](https://github.com/ha
 ```
 1. Open the switch, desolder the NOR flash chip U6 (Macronix MX25L12845E, 16 MB)
 2. Read the chip twice with the programmer, compare, keep the backup safe
-3. Build the image: ./build.sh
+3. Build the image (./build.sh) or use the prebuilt one in release/
 4. Write the image to the chip, read it back, compare
 5. Solder the chip back, connect the serial console to J3 (optional but recommended)
 6. Power on: about 3 minutes later, the interface answers on http://DHCP_ADDRESS/
@@ -176,6 +176,22 @@ Tips:
 ---
 
 ## 6. Build the image
+
+### Option A: prebuilt image
+
+`release/switch-local-1.5.0.bin.gz` is the image produced by `./build.sh` from this repository (interface 1.5.0, kernel 3.18.131-meraki). Check it before writing it:
+
+```sh
+gunzip -k release/switch-local-1.5.0.bin.gz
+sha256sum release/switch-local-1.5.0.bin
+# f41e8a7f5b70b8268e5817328b1b4937bcaa9c0800511bf5e7eef422d8c86821
+```
+
+> **Not yet tested on hardware.** This exact image was built from scratch with `./build.sh` and checked offline (RedBoot identical to the one running on the test switch, partition headers, kernel version and structure layouts, files in the system). It has **not** been written to a chip and booted yet. The test switch runs the same kernel and interface, installed step by step. Keep your backup at hand.
+
+`release/kernel-3.18.131-meraki.part` is the kernel alone, for an update package (`tools/make-update.sh -k`).
+
+### Option B: build it yourself
 
 On Debian or Ubuntu:
 
