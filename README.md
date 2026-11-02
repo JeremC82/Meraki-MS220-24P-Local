@@ -1,491 +1,517 @@
-# Meraki MS220-24P en local, sans cloud
+# Meraki MS220-24P — local firmware, no cloud
 
-Firmware libre et interface d'administration web pour **Cisco Meraki MS220-24P**. Il permet de réutiliser un switch rattaché à un compte Meraki inaccessible ou dont la licence a expiré, au lieu de le jeter.
+Free firmware and a local web management interface for the **Cisco Meraki MS220-24P**. It gives a second life to a switch that is stuck in a Meraki organisation you cannot access, or whose licence has expired, instead of throwing it away.
 
-Le switch démarre sur un système Linux libre (noyau 3.18.131 + buildroot). Il pilote la puce de commutation avec **les modules Meraki présents dans sa propre mémoire NAND**, et se gère entièrement en local depuis un navigateur.
+The switch boots a free Linux system (kernel 3.18.131 + buildroot). It drives the switching chip with **the Meraki modules already stored in its own NAND flash**, and is managed entirely locally from a web browser.
 
-| Mode clair | Mode sombre |
+| Light mode | Dark mode |
 |---|---|
-| ![Tableau de bord](docs/captures/clair/tableau-de-bord.png) | ![Tableau de bord, mode sombre](docs/captures/sombre/tableau-de-bord.png) |
+| ![Dashboard](docs/captures/light/dashboard.png) | ![Dashboard, dark mode](docs/captures/dark/dashboard.png) |
 
-Ce projet s'appuie sur le travail de Hal Martin ([meraki-builder](https://github.com/halmartin/meraki-builder)). Il y ajoute :
-- la compatibilité avec le **firmware Meraki 2023** (noyau 3.18.131) ;
-- l'emplacement exact de la **console série du MS220-24P (J3)** ;
-- une interface web complète et un système de mise à jour par paquet.
+This project builds on Hal Martin's work ([meraki-builder](https://github.com/halmartin/meraki-builder)). It adds:
+- support for the **2023 Meraki firmware** (kernel 3.18.131);
+- the exact location of the **MS220-24P serial console (J3)**;
+- a complete web interface, SNMP and an update system based on packages.
 
-> **Avertissement.** Il faut dessouder la puce de la mémoire flash, la reprogrammer et la ressouder. Une erreur peut rendre le switch inutilisable. Faites **toujours** une sauvegarde de la puce d'origine avant toute écriture : elle permet de revenir exactement à l'état de départ.
-
----
-
-## Sommaire
-
-1. [Ce qui fonctionne](#1-ce-qui-fonctionne)
-2. [Matériel nécessaire](#2-matériel-nécessaire)
-3. [Vue d'ensemble](#3-vue-densemble)
-4. [Sauvegarder la puce d'origine](#4-sauvegarder-la-puce-dorigine)
-5. [Console série (J3)](#5-console-série-j3)
-6. [Construire l'image](#6-construire-limage)
-7. [Écrire l'image et premier démarrage](#7-écrire-limage-et-premier-démarrage)
-8. [Interface d'administration](#8-interface-dadministration)
-9. [Mises à jour](#9-mises-à-jour)
-10. [Bouton reset](#10-bouton-reset)
-11. [Ventilation](#11-ventilation)
-12. [Accès SSH](#12-accès-ssh)
-13. [Revenir au firmware Meraki](#13-revenir-au-firmware-meraki)
-14. [Dépannage](#14-dépannage)
-15. [Fonctionnement technique](#15-fonctionnement-technique)
-16. [Contenu du dépôt](#16-contenu-du-dépôt)
-17. [Crédits et licences](#17-crédits-et-licences)
+> **Warning.** You need to desolder the flash chip, reprogram it and solder it back. A mistake can leave the switch unusable. **Always** back up the original chip before writing anything: that backup lets you go back exactly to where you started.
 
 ---
 
-## 1. Ce qui fonctionne
+## Contents
 
-| Fonction | Détail |
+1. [What works](#1-what-works)
+2. [What you need](#2-what-you-need)
+3. [Overview](#3-overview)
+4. [Back up the original chip](#4-back-up-the-original-chip)
+5. [Serial console (J3)](#5-serial-console-j3)
+6. [Build the image](#6-build-the-image)
+7. [Write the image and first boot](#7-write-the-image-and-first-boot)
+8. [Web interface](#8-web-interface)
+9. [Updates](#9-updates)
+10. [SNMP](#10-snmp)
+11. [Reset button](#11-reset-button)
+12. [Cooling](#12-cooling)
+13. [SSH access](#13-ssh-access)
+14. [Going back to the Meraki firmware](#14-going-back-to-the-meraki-firmware)
+15. [Troubleshooting](#15-troubleshooting)
+16. [How it works](#16-how-it-works)
+17. [Repository layout](#17-repository-layout)
+18. [Credits and licences](#18-credits-and-licences)
+
+---
+
+## 1. What works
+
+| Feature | Details |
 |---|---|
-| Commutation des 24 ports | 10/100/1000 Mb/s, pilote Vitesse de Meraki |
-| Ports 21 à 24 | ports **combo** RJ45 / SFP 1 Gb/s : un seul des deux à la fois, le cuivre est prioritaire. Un module SFP inséré est détecté et affiché (fabricant, référence) |
-| PoE / PoE+ | 802.3af/at sur les 24 ports, coupure et redémarrage par port, mesure de la puissance |
-| VLAN | ports d'accès et trunks (VLAN autorisés, VLAN natif), VLAN d'administration |
-| Ports | activation, vitesse et duplex forcés, isolation, protection contre les tempêtes de broadcast |
-| Spanning Tree | RSTP, priorité du pont, port terminal (edge) automatique ou forcé |
-| LLDP, IGMP snooping | activables |
-| Miroir de port | entrant et/ou sortant, vers un port d'analyse |
-| Test de câble | VeriPHY : état et longueur des 4 paires |
-| Supervision | débit par port, PoE, températures, ventilateur, historique sur 1 h et 24 h |
-| Appareils connectés | pour chaque port : adresse IP, nom (mDNS) et adresse MAC des appareils, relevés passivement par le moteur Meraki |
-| Ventilation | automatique selon la température, avec préréglages |
-| Administration | DHCP ou adresse fixe, nom, mot de passe, sauvegarde et restauration de la configuration |
-| Mises à jour | paquets `.msu` envoyés depuis l'interface (interface et/ou noyau) |
-| Bouton reset | 10 s : retour à la configuration par défaut |
-| Heure | synchronisation NTP (passerelle puis pool.ntp.org) |
+| Switching on 24 ports | 10/100/1000 Mb/s, Meraki's Vitesse driver |
+| Ports 21 to 24 | **combo** ports, RJ45 or SFP 1 Gb/s: only one at a time, copper wins. An inserted SFP module is detected and shown (vendor, part number) |
+| PoE / PoE+ | 802.3af/at on all 24 ports, power off and power-cycle per port, power measurement |
+| VLANs | access ports and trunks (allowed VLANs, native VLAN), management VLAN |
+| Ports | enable/disable, forced speed and duplex, isolation, broadcast storm protection |
+| Spanning Tree | RSTP, bridge priority, edge port automatic or forced |
+| LLDP, IGMP snooping | can be turned on or off |
+| Port mirroring | ingress and/or egress, to an analyzer port |
+| Cable test | VeriPHY: status and length of the 4 pairs |
+| Connected devices | for each port: IP address, name (mDNS) and MAC address of the devices, passively learned by the Meraki engine |
+| Monitoring | traffic per port, PoE, temperatures, fan, 1 h and 24 h history |
+| SNMP | read-only agent: IF-MIB (24 ports, 64-bit counters) and POWER-ETHERNET-MIB |
+| Cooling | temperature-driven fan control, with presets |
+| Administration | DHCP or static address, name, password, configuration backup and restore |
+| Updates | `.msu` packages uploaded from the interface (interface and/or kernel) |
+| Reset button | held 10 s: back to the default configuration |
+| Clock | NTP sync (gateway, then pool.ntp.org) |
+| Languages | English and French, chosen from the browser language or the selector in the header |
 
-**Les ports SFP ne sont pas en 10 Gb/s.** Sur le MS220-24P, les 4 cages SFP sont des ports 1 Gb/s partagés avec les prises RJ45 21 à 24 (voir la [documentation Meraki](https://documentation.meraki.com/Switching/MS_-_Switches/Operate_and_Maintain/How-Tos/MS_Switch_SFP_and_SFP__Overview)). La puce VSC7427 ne gère pas le 10 Gb/s.
+**The SFP ports are not 10 Gb/s.** On the MS220-24P, the 4 SFP cages are 1 Gb/s ports shared with RJ45 ports 21 to 24 (see the [Meraki documentation](https://documentation.meraki.com/Switching/MS_-_Switches/Operate_and_Maintain/How-Tos/MS_Switch_SFP_and_SFP__Overview)). The VSC7427 chip does not do 10 Gb/s.
 
-**Modèle testé :** MS220-24P avec le firmware Meraki du **18 mars 2023**, noyau `3.18.131-meraki`, dans la NAND. Pour un autre firmware, voir [Adapter à un autre firmware Meraki](#adapter-à-un-autre-firmware-meraki).
-
----
-
-## 2. Matériel nécessaire
-
-- **Programmateur de puces SPI** : XGecu **TL866II+** (testé), avec un **adaptateur SOP16** (ou SOP16 → DIP). Il est piloté sous Linux par [minipro](https://gitlab.com/DavidGriffith/minipro).
-- **Station à air chaud** et fer à souder, flux, tresse à dessouder. La puce est un SOP16 au pas de 1,27 mm.
-- **Adaptateur USB-série en 3,3 V** : CP2102, FTDI réglé en 3,3 V, etc. **Pas de 5 V.**
-- **Deux résistances** : 1 kΩ et 1,3 kΩ (ou 1,2 kΩ). Elles abaissent le signal envoyé au switch vers 1,8 V.
-- **Fils Dupont**, ou un petit connecteur 4 broches au pas de 2,54 mm à souder sur J3.
-- **Un PC Linux** (Debian, Ubuntu…) avec environ 10 Go libres pour construire l'image.
+**Tested model:** MS220-24P with the Meraki firmware of **18 March 2023**, kernel `3.18.131-meraki`, in the NAND. For other firmware, see [Adapting to another Meraki firmware](#adapting-to-another-meraki-firmware).
 
 ---
 
-## 3. Vue d'ensemble
+## 2. What you need
+
+- **SPI flash programmer**: XGecu **TL866II+** (tested), with a **SOP16 adapter** (or SOP16 to DIP). It is driven on Linux by [minipro](https://gitlab.com/DavidGriffith/minipro).
+- **Hot air station** and soldering iron, flux, desoldering braid. The chip is a SOP16 with a 1.27 mm pitch.
+- **3.3 V USB-serial adapter**: CP2102, FTDI set to 3.3 V, etc. **Not 5 V.**
+- **Two resistors**: 1 kΩ and 1.3 kΩ (or 1.2 kΩ). They bring the signal sent to the switch down to about 1.8 V.
+- **Dupont wires**, or a small 4-pin 2.54 mm header soldered on J3.
+- **A Linux PC** (Debian, Ubuntu…) with about 10 GB free to build the image.
+
+---
+
+## 3. Overview
 
 ```
-1. Ouvrir le switch, dessouder la puce NOR (Macronix MX25L12845E, 16 Mo)
-2. Lire la puce deux fois au programmateur, comparer, mettre la sauvegarde à l'abri
-3. Construire l'image : ./build.sh  (ou utiliser l'image fournie)
-4. Écrire l'image dans la puce, relire, comparer
-5. Ressouder la puce, brancher la console série sur J3 (facultatif mais conseillé)
-6. Allumer : environ 3 minutes plus tard, l'interface répond sur http://ADRESSE_DHCP/
+1. Open the switch, desolder the NOR flash chip U6 (Macronix MX25L12845E, 16 MB)
+2. Read the chip twice with the programmer, compare, keep the backup safe
+3. Build the image: ./build.sh
+4. Write the image to the chip, read it back, compare
+5. Solder the chip back, connect the serial console to J3 (optional but recommended)
+6. Power on: about 3 minutes later, the interface answers on http://DHCP_ADDRESS/
 ```
 
-La **NAND (128 Mo) n'est jamais modifiée**. Elle contient le firmware Meraki, d'où sont lus à chaque démarrage les modules du pilote de la puce de commutation et le modèle de configuration Click.
+The **NAND (128 MB) is never modified**. It holds the Meraki firmware. At every boot, the switching chip driver modules and the Click configuration template are read from it.
 
 ---
 
-## 4. Sauvegarder la puce d'origine
+## 4. Back up the original chip
 
-### Repérer et dessouder la puce
+### Find and desolder the chip
 
-La mémoire NOR est la puce **U6**, un **SOP16** marqué **MXIC MX25L12845E** (identifiant `0xC22018`). Elle se trouve près du ventilateur, au-dessus du connecteur **J18**. La **broche 1** est en haut à gauche, à côté du repère « 1 » sérigraphié. Notez son orientation avant de la dessouder, pour la remettre dans le même sens.
+The NOR flash is chip **U6**, a **SOP16** marked **MXIC MX25L12845E** (ID `0xC22018`). It sits next to the fan, above connector **J18**. **Pin 1** is the top-left one, next to the printed "1". Note its orientation before desoldering, so you can put it back the same way.
 
-![Emplacement de la puce U6](docs/carte-u6.jpg)
+![Location of chip U6](docs/board-u6.jpg)
 
-### Installer minipro
+### Install minipro
 
 ```sh
 sudo apt install build-essential pkg-config libusb-1.0-0-dev git
 git clone https://gitlab.com/DavidGriffith/minipro.git
 cd minipro && make
 sudo cp udev/60-minipro.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules
-# débrancher et rebrancher le TL866
+# unplug and replug the TL866
 ```
 
-### Lire la puce deux fois
+### Read the chip twice
 
-Placez la puce dans l'adaptateur SOP16, broche 1 du bon côté.
+Put the chip in the SOP16 adapter, pin 1 the right way round.
 
 ```sh
-./minipro -p "MX25L12845E@SOP16" -D                          # doit afficher Chip ID: 0xC22018  OK
-./minipro -p "MX25L12845E@SOP16" -r sauvegarde-1.bin
-./minipro -p "MX25L12845E@SOP16" -r sauvegarde-2.bin
-sha256sum sauvegarde-1.bin sauvegarde-2.bin                   # les deux empreintes doivent être identiques
+./minipro -p "MX25L12845E@SOP16" -D                          # must print Chip ID: 0xC22018  OK
+./minipro -p "MX25L12845E@SOP16" -r backup-1.bin
+./minipro -p "MX25L12845E@SOP16" -r backup-2.bin
+sha256sum backup-1.bin backup-2.bin                           # both checksums must match
 ```
 
-Si l'identifiant lu est `0xFFFFFF` ou si les deux lectures diffèrent, la puce est mal en contact : remettez-la en place et recommencez. **Copiez la sauvegarde en lieu sûr**, sur un autre disque ou une clé USB. C'est votre seul moyen de revenir au firmware Meraki d'origine.
+If the ID reads `0xFFFFFF`, or the two reads differ, the chip is not making good contact: reseat it and try again. **Copy the backup somewhere safe** (another disk, a USB stick). It is your only way back to the original Meraki firmware.
 
 ---
 
-## 5. Console série (J3)
+## 5. Serial console (J3)
 
-La console est **facultative** pour une installation qui se passe bien. Elle est **indispensable pour diagnostiquer** un problème : elle affiche tout le démarrage et donne un shell root.
+The console is **optional** for an installation that goes well. It is **essential to diagnose** a problem: it shows the whole boot and gives a root shell.
 
-![Connecteurs de la carte](docs/carte-j3.jpg)
+![Board connectors](docs/board-j3.jpg)
 
-Le connecteur **J3** est situé près du connecteur d'alimentation 12 V, à gauche de J4. **J2 et J4 ne sont pas la console.**
+Connector **J3** is next to the 12 V power connector, left of J4. **J2 and J4 are not the console.**
 
-| Broche J3 | Signal | Niveau | Branchement |
+| J3 pin | Signal | Level | Connection |
 |---|---|---|---|
-| 1 | 3,3 V | alimentation | **ne rien brancher** |
-| 2 | TX du switch | 3,3 V au repos | → **RX** de l'adaptateur, en direct |
-| 3 | RX du switch | **1,8 V** | ← **TX** de l'adaptateur **à travers le pont diviseur** |
-| 4 | GND | masse | → **GND** de l'adaptateur |
+| 1 | 3.3 V | power | **leave unconnected** |
+| 2 | switch TX | 3.3 V idle | → adapter **RX**, directly |
+| 3 | switch RX | **1.8 V** | ← adapter **TX**, **through the voltage divider** |
+| 4 | GND | ground | → adapter **GND** |
 
-L'entrée RX du switch (broche 3) fonctionne en **1,8 V**. Un TX à 3,3 V branché directement risque de l'abîmer. Il faut donc un pont diviseur :
+The switch RX input (pin 3) works at **1.8 V**. A 3.3 V TX wired directly could damage it. You need a voltage divider:
 
 ```
-  Adaptateur USB-série (3,3 V)                  Switch, connecteur J3
+  USB-serial adapter (3.3 V)                    Switch, connector J3
   ┌──────────┐                                  ┌──────────────────┐
   │      RX  ├──────────────────────────────────┤ 2  TX            │
   │          │                                  │                  │
-  │      TX  ├────[ 1 kΩ ]────────┬─────────────┤ 3  RX (1,8 V)    │
+  │      TX  ├────[ 1 kΩ ]────────┬─────────────┤ 3  RX (1.8 V)    │
   │          │                    │             │                  │
-  │          │                [ 1,3 kΩ ]        │                  │
+  │          │                [ 1.3 kΩ ]        │                  │
   │          │                    │             │                  │
   │     GND  ├────────────────────┴─────────────┤ 4  GND           │
-  └──────────┘                                  │ 1  3,3 V : libre │
+  └──────────┘                                  │ 1  3.3 V: unused │
                                                 └──────────────────┘
-       3,3 V × 1,3 / (1 + 1,3) ≈ 1,87 V sur la broche 3
+       3.3 V × 1.3 / (1 + 1.3) ≈ 1.87 V on pin 3
 ```
 
-Réglages : **115200 bauds, 8 bits, sans parité, 1 bit d'arrêt (8N1), sans contrôle de flux**.
+Settings: **115200 baud, 8 data bits, no parity, 1 stop bit (8N1), no flow control**.
 
 ```sh
 sudo apt install picocom
-picocom -b 115200 /dev/ttyUSB0          # quitter : Ctrl+A puis Ctrl+X
+picocom -b 115200 /dev/ttyUSB0          # quit: Ctrl+A then Ctrl+X
 ```
 
-Conseils :
-- **Allumez d'abord le switch, puis branchez l'USB de l'adaptateur.** Sinon la mise sous tension peut faire déconnecter l'adaptateur USB, à cause de la différence de masse.
-- Pour seulement **lire** le démarrage, les fils 2 (vers RX) et 4 (GND) suffisent.
-- Avec le firmware Meraki d'origine, la console affiche le démarrage, puis une invite `<Meraki>` qui refuse toutes les commandes. C'est normal.
-- Avec ce firmware, la console donne directement un **shell root** (`~ #`).
+Tips:
+- **Power on the switch first, then plug in the adapter's USB.** Otherwise, powering on can make the USB adapter disconnect, because of the ground difference.
+- To only **read** the boot log, wires 2 (to RX) and 4 (GND) are enough.
+- With the original Meraki firmware, the console shows the boot, then a `<Meraki>` prompt that rejects every command. This is expected.
+- With this firmware, the console gives a **root shell** directly (`~ #`).
 
 ---
 
-## 6. Construire l'image
+## 6. Build the image
 
-### Option A : image fournie
-
-Si une image précompilée est fournie avec une version publiée (*release*) du dépôt, vérifiez son empreinte SHA-256 avant de l'écrire.
-
-### Option B : construire soi-même
-
-Sur Debian ou Ubuntu :
+On Debian or Ubuntu:
 
 ```sh
 sudo apt install build-essential git wget cpio unzip rsync bc file python3 xz-utils bzip2 \
                  libncurses-dev libssl-dev flex bison perl openssl
 git clone https://github.com/JeremC82/Meraki-MS220-24P-Local.git
 cd Meraki-MS220-24P-Local
-./build.sh                    # 1 à 2 heures la première fois
+./build.sh                    # 1 to 2 hours the first time
 ```
 
-Le script récupère et assemble :
+The script downloads and assembles:
 
-| Élément | Source |
+| Part | Source |
 |---|---|
 | buildroot 2023.02.4 | buildroot.org, configuration `firmware/rootfs/buildroot.config` |
-| Scripts et paquets MS220 | [meraki-builder](https://github.com/halmartin/meraki-builder) (commit fixé) + `firmware/rootfs/overlay` |
-| Noyau | sources GPL Meraki 3.18.123 ([switch-11-22-ms220](https://github.com/halmartin/switch-11-22-ms220)) + mises à jour Linux 3.18.124 à 3.18.131 (kernel.org) + `firmware/kernel/0001-skbuff-cb-96-octets.patch` + `firmware/kernel/config-3.18.131-meraki` |
-| RedBoot | `redboot-nocrc-sz.bin` de [MS42-GPL-sources-3-18-122](https://github.com/halmartin/MS42-GPL-sources-3-18-122), empreinte vérifiée |
-| `assoc_stub.ko` | `firmware/assoc_stub`, compilé avec le noyau |
-| Serveur web | busybox 1.36.1 réduit à `httpd` (`firmware/httpd`) |
+| MS220 scripts and packages | [meraki-builder](https://github.com/halmartin/meraki-builder) (pinned commit) + `firmware/rootfs/overlay` |
+| Kernel | Meraki GPL sources 3.18.123 ([switch-11-22-ms220](https://github.com/halmartin/switch-11-22-ms220)) + Linux stable updates 3.18.124 to 3.18.131 (kernel.org) + `firmware/kernel/0001-skbuff-cb-96-octets.patch` + `firmware/kernel/config-3.18.131-meraki` |
+| RedBoot | `redboot-nocrc-sz.bin` from [MS42-GPL-sources-3-18-122](https://github.com/halmartin/MS42-GPL-sources-3-18-122), checksum verified |
+| `assoc_stub.ko` | `firmware/assoc_stub`, built against the kernel |
+| Web server | busybox 1.36.1 reduced to `httpd` (`firmware/httpd`) |
+| SNMP agent | net-snmp 5.9.3 from buildroot (agent only, with `pass_persist`) |
 | Interface | `switchui/` |
 
-Résultat :
-- `build/switch-local.bin` : l'image de la puce complète (16 Mo) ;
-- `build/kernel/kernel.part` : le noyau seul, pour un paquet de mise à jour.
+Output:
+- `build/switch-local.bin`: the full chip image (16 MB);
+- `build/kernel/kernel.part`: the kernel only, for an update package.
 
-Découpage de l'image :
+Image layout:
 
-| Adresse | Taille | Partition | Contenu |
+| Address | Size | Partition | Content |
 |---|---|---|---|
-| `0x000000` | 256 Ko | redboot | RedBoot sans contrôle de CRC ni de taille |
-| `0x040000` | 2,75 Mo | kernel | en-tête `SPIM` (chargement et entrée à `0x81000000`) + noyau compressé |
-| `0x300000` | 8 Mo | squashfs | système en lecture seule |
-| `0xB00000` | 5 Mo | config | jffs2 : zone persistante superposée à `/etc` et `/root` |
+| `0x000000` | 256 KB | redboot | RedBoot without CRC or size check |
+| `0x040000` | 2.75 MB | kernel | `SPIM` header (load and entry at `0x81000000`) + compressed kernel |
+| `0x300000` | 8 MB | squashfs | read-only system |
+| `0xB00000` | 5 MB | config | jffs2: persistent area overlaid on `/etc` and `/root` |
 
 ---
 
-## 7. Écrire l'image et premier démarrage
+## 7. Write the image and first boot
 
 ```sh
 ./minipro -p "MX25L12845E@SOP16" -D                         # Chip ID: 0xC22018  OK
-./minipro -p "MX25L12845E@SOP16" -w build/switch-local.bin   # efface, écrit, vérifie (environ 3 min)
-./minipro -p "MX25L12845E@SOP16" -r relecture.bin
-sha256sum build/switch-local.bin relecture.bin              # empreintes identiques
+./minipro -p "MX25L12845E@SOP16" -w build/switch-local.bin   # erases, writes, verifies (about 3 min)
+./minipro -p "MX25L12845E@SOP16" -r readback.bin
+sha256sum build/switch-local.bin readback.bin               # checksums must match
 ```
 
-Ressoudez la puce, **broche 1 du même côté qu'à l'origine**, et vérifiez au multimètre qu'il n'y a pas de pont entre broches. Branchez un port du switch sur votre réseau (avec un serveur DHCP), puis allumez.
+Solder the chip back, **pin 1 on the same side as originally**, and check with a multimeter that no pins are bridged. Connect a switch port to your network (with a DHCP server), then power on.
 
-**Premier démarrage, dans l'ordre (console série) :**
-1. RedBoot, puis `Linux version 3.18.131-meraki` ;
-2. lecture des modules dans la NAND : `Modules trouvés dans part1`, puis `Loaded 'luton26/vtss_core.ko …'` … `Loaded 'luton26/vc_click.ko'`. Le message `Request for unknown module key 'Cisco Meraki…'` est normal ;
-3. `Using IP address: 192.168.x.y` (adresse obtenue en DHCP sur le VLAN 1) ;
+**First boot, in order (serial console):**
+1. RedBoot, then `Linux version 3.18.131-meraki`;
+2. modules read from the NAND: `Modules trouvés dans part1`, then `Loaded 'luton26/vtss_core.ko …'` … `Loaded 'luton26/vc_click.ko'`. The message `Request for unknown module key 'Cisco Meraki…'` is expected;
+3. `Using IP address: 192.168.x.y` (address obtained by DHCP on VLAN 1);
 4. `switchui: http://192.168.x.y/`.
 
-Comptez **environ 3 minutes** entre la mise sous tension et la réponse de l'interface web. Sans console, cherchez l'adresse IP du switch dans la liste des baux DHCP de votre box ou routeur. Son adresse MAC commence par `e0:55:3d` ou `88:15:44`, préfixes Meraki.
+Allow **about 3 minutes** between power-on and the web interface answering. Without a console, look for the switch IP in the DHCP lease list of your router. Its MAC address starts with `e0:55:3d` or `88:15:44` (Meraki prefixes).
 
-**Identifiants par défaut de l'interface web :**
-- identifiant : `admin` ;
-- mot de passe : **le numéro de série du switch**, en majuscules, **sans tirets**, comme imprimé sur l'étiquette (par exemple `Q2XXABCD1234`).
+**Default web interface credentials:**
+- username: `admin`;
+- password: **the switch serial number**, in capitals, **without dashes**, as printed on the label (for example `Q2XXABCD1234`).
 
-Changez-le dans **Système → Accès à l'interface**.
-
----
-
-## 8. Interface d'administration
-
-Elle est accessible sur `http://ADRESSE_DU_SWITCH/` (port 80), avec authentification. Les requêtes venant d'un autre site sont refusées.
-
-| Onglet | Contenu |
-|---|---|
-| **Tableau de bord** | façade des 24 ports, débits entrant et sortant, PoE, température, ventilateur, charge. **Cliquer sur un port** ouvre sa configuration, la liste des appareils connectés (IP, nom, MAC) et l'historique de son débit et de son PoE |
-| **Ports** | tableau de tous les ports : état, lien, VLAN, PoE, STP, débit, compteurs, adresses MAC |
-| **VLAN** | liste nommée des VLAN et tableau d'appartenance des ports (U non étiqueté / T étiqueté) |
-| **PoE** | consommation, tension, température, coupure et redémarrage par port, graphique par appareil |
-| **Ventilation** | vitesse, températures, courbe de ventilation, préréglages, historique |
-| **Graphiques** | débit par port ou total, sur 1 h (pas de 10 s) ou 24 h (pas d'une minute) |
-| **Table MAC** | adresses apprises avec l'IP et le nom de l'appareil, filtre, vidage |
-| **Diagnostic** | test de câble, miroir de port, journal |
-| **Système** | adresse IP (DHCP ou fixe), VLAN d'administration, nom, RSTP, LLDP, IGMP, mot de passe, mise à jour, sauvegarde et restauration, redémarrage |
-
-Captures en mode clair (le mode sombre suit le réglage du système, voir `docs/captures/sombre/`) :
-
-| Ports | Configuration d'un port |
-|---|---|
-| ![Ports](docs/captures/clair/ports.png) | ![Port](docs/captures/clair/configuration-port.png) |
-| **PoE** | **Ventilation** |
-| ![PoE](docs/captures/clair/poe.png) | ![Ventilation](docs/captures/clair/ventilation.png) |
-| **VLAN** | **Graphiques** |
-| ![VLAN](docs/captures/clair/vlan.png) | ![Graphiques](docs/captures/clair/graphiques.png) |
-| **Diagnostic** | **Système** |
-| ![Diagnostic](docs/captures/clair/diagnostic.png) | ![Système](docs/captures/clair/systeme.png) |
-
-**La configuration est enregistrée** dans la zone persistante (`/etc/switchui/*.conf`) et réappliquée à chaque démarrage.
-- **Changer le VLAN d'administration** prend effet au redémarrage suivant.
-- **Une adresse IP fixe erronée** ou **un VLAN mal réglé sur le port d'accès** peuvent couper l'accès à l'interface. La console série ou le [bouton reset](#10-bouton-reset) permettent de récupérer.
+Change it in **System → Web interface access**.
 
 ---
 
-## 9. Mises à jour
+## 8. Web interface
 
-### Installer une mise à jour
+It is served on `http://SWITCH_ADDRESS/` (port 80), with authentication. Requests coming from another website are rejected.
 
-**Système → Mise à jour → Choisir un paquet de mise à jour (.msu)**, puis **Installer**. L'interface affiche le contenu du paquet avant l'installation. Le paquet est **vérifié** avant tout changement :
-- empreinte SHA-256 de chaque fichier ;
-- chemins autorisés uniquement (`/etc`, noyau) ;
-- taille et en-tête du noyau.
+| Tab | Content |
+|---|---|
+| **Dashboard** | front panel of the 24 ports, inbound and outbound traffic, PoE, temperature, fan, load. **Clicking a port** opens its settings, the list of connected devices (IP, name, MAC) and the history of its traffic and PoE |
+| **Ports** | table of all ports: state, link, VLAN, PoE, STP, traffic, counters, MAC addresses |
+| **VLAN** | named VLAN list and port membership table (U untagged / T tagged) |
+| **PoE** | power draw, voltage, temperature, power off and power-cycle per port, chart per device |
+| **Cooling** | fan speed, temperatures, fan curve, presets, history |
+| **Charts** | traffic per port or total, over 1 h (10 s steps) or 24 h (1 min steps) |
+| **MAC table** | learned addresses with the device IP and name, filter, flush |
+| **Diagnostics** | cable test, port mirroring, log |
+| **System** | IP address (DHCP or static), management VLAN, name, RSTP, LLDP, IGMP, SNMP, password, update, backup and restore, reboot |
 
-Un paquet corrompu ou non conforme est refusé.
+| Ports | Port settings |
+|---|---|
+| ![Ports](docs/captures/light/ports.png) | ![Port settings](docs/captures/light/port-settings.png) |
+| **PoE** | **Cooling** |
+| ![PoE](docs/captures/light/poe.png) | ![Cooling](docs/captures/light/cooling.png) |
+| **VLAN** | **Charts** |
+| ![VLAN](docs/captures/light/vlans.png) | ![Charts](docs/captures/light/charts.png) |
+| **Diagnostics** | **System** |
+| ![Diagnostics](docs/captures/light/diagnostics.png) | ![System](docs/captures/light/system.png) |
 
-- **Interface seule** : elle est préparée à côté (`/etc/switchui.new`), puis basculée d'un coup. Une coupure de courant laisse donc soit l'ancienne version complète, soit la nouvelle. La configuration (ports, VLAN, système, mot de passe) est conservée.
-- **Noyau** : il est écrit dans la partition `kernel`, relu et vérifié, puis le switch redémarre (environ 3 minutes). **Ne coupez pas l'alimentation pendant cette étape.** Un noyau incomplet empêche le démarrage, et il faut alors réécrire la puce au programmateur.
-- **Revenir à la version précédente** : un bouton dans la même carte restaure l'interface précédente, en gardant la configuration.
+Dark mode follows the operating system setting (see `docs/captures/dark/`).
 
-### Fabriquer un paquet de mise à jour
+**The configuration is saved** in the persistent area (`/etc/switchui/*.conf`) and applied again at every boot.
+- **Changing the management VLAN** takes effect at the next reboot.
+- **A wrong static IP address** or **a wrong VLAN on the access port** can cut access to the interface. The serial console or the [reset button](#11-reset-button) get you back in.
 
-Après avoir modifié l'interface (`switchui/`), ou reconstruit le noyau :
+---
+
+## 9. Updates
+
+### Installing an update
+
+**System → Update → Choose an update package (.msu)**, then **Install**. The interface shows the package content before installing it. The package is **verified** before anything changes:
+- SHA-256 checksum of every file;
+- allowed paths only (`/etc`, kernel);
+- kernel size and header.
+
+A corrupted or non-compliant package is rejected.
+
+- **Interface only**: it is prepared next to the current one (`/etc/switchui.new`), then switched over in one step. A power cut therefore leaves either the old version complete, or the new one, never a mix. The configuration (ports, VLANs, system, password) is kept.
+- **Kernel**: it is written to the `kernel` partition, read back and verified, then the switch reboots (about 3 minutes). **Do not cut the power during this step.** An incomplete kernel prevents booting, and the chip then has to be rewritten with the programmer.
+- **Roll back**: a button in the same card restores the previous interface, keeping the configuration.
+
+### Making an update package
+
+After changing the interface (`switchui/`), or rebuilding the kernel:
 
 ```sh
-# interface seule
-echo 1.3.0 > switchui/VERSION
-tools/make-update.sh -v 1.3.0 -d "Description de la mise à jour"
+# interface only
+echo 1.6.0 > switchui/VERSION
+tools/make-update.sh -v 1.6.0 -d "Description of the update"
 
-# interface + nouveau noyau (redémarrage automatique)
-tools/make-update.sh -v 1.3.0 -d "Nouveau noyau" -k build/kernel/kernel.part
+# interface + SNMP agent (for switches installed before SNMP support)
+tools/make-update.sh -v 1.6.0 -d "Interface and SNMP" -e extras
 
-# noyau seul
-tools/make-update.sh -v 1.3.0 -n noyau -d "Noyau seul" -k build/kernel/kernel.part --no-ui
+# interface + new kernel (automatic reboot)
+tools/make-update.sh -v 1.6.0 -d "New kernel" -k build/kernel/kernel.part
+
+# kernel only
+tools/make-update.sh -v 1.6.0 -n kernel -d "Kernel only" -k build/kernel/kernel.part --no-ui
 ```
 
-| Option | Rôle |
+| Option | Purpose |
 |---|---|
-| `-v VERSION` | **obligatoire**, affichée dans l'interface |
-| `-n NOM` | nom du paquet (défaut `switchui`) |
-| `-d TEXTE` | description affichée avant l'installation (sans `"`, `$`, `` ` ``, `\`) |
-| `-k FICHIER` | noyau (`kernel.part`) à écrire dans la puce |
-| `-s FICHIER` | script lancé sur le switch après la copie |
-| `-e DOSSIER` | fichiers supplémentaires à installer dans `/etc` (arborescence relative à `/etc`) |
-| `-r` | redémarrer après l'installation |
-| `-o FICHIER` | nom du paquet produit (défaut `NOM-VERSION.msu`) |
-| `--no-ui` | ne pas inclure l'interface |
+| `-v VERSION` | **required**, shown in the interface |
+| `-n NAME` | package name (default `switchui`) |
+| `-d TEXT` | description shown before installing (no `"`, `$`, `` ` ``, `\`) |
+| `-k FILE` | kernel (`kernel.part`) to write to the chip |
+| `-s FILE` | script run on the switch after the files are copied |
+| `-e DIR` | extra files to install in `/etc` (tree relative to `/etc`) |
+| `-r` | reboot after installing |
+| `-o FILE` | output package name (default `NAME-VERSION.msu`) |
+| `--no-ui` | do not include the interface |
 
-Format d'un paquet `.msu` (archive tar compressée en gzip) :
+`.msu` package format (gzip-compressed tar archive):
 
 ```
 manifest      NAME="…"  VERSION="…"  DESCRIPTION="…"  REBOOT="0|1"
-sha256sums    empreinte de chaque fichier du paquet
-etc/…         fichiers installés dans /etc (etc/switchui/… = interface)
-kernel.part   (facultatif) image de la partition kernel, en-tête SPIM, 0x2C0000 octets maximum
-install.sh    (facultatif) script exécuté après la copie
+sha256sums    checksum of every file in the package
+etc/…         files installed in /etc (etc/switchui/… = interface)
+kernel.part   (optional) kernel partition image, SPIM header, 0x2C0000 bytes max
+install.sh    (optional) script run after copying
 ```
 
-Pour développer, on peut aussi copier des fichiers par SSH (voir plus bas), puis redémarrer l'interface avec `/etc/init.d/S95switchui restart`.
+During development, you can also copy files over SSH (see below), then restart the interface with `/etc/init.d/S95switchui restart`.
 
 ---
 
-## 10. Bouton reset
+## 10. SNMP
 
-**Maintenez le bouton reset de la façade 10 secondes**, switch en marche. La LED d'alimentation passe à l'orange, puis le switch redémarre avec :
-- l'adresse IP en **DHCP** sur le VLAN 1 ;
-- l'identifiant web **admin / numéro de série** ;
-- les ports, VLAN et réglages système **par défaut**.
+Enable it in **System → SNMP**: community, allowed addresses (`default` for any, or a network such as `192.168.1.0/24`), location and contact. The agent is **read-only**, SNMP v2c, on UDP port 161. **Use a community other than `public`.**
 
-Le firmware, les modules et l'interface restent installés : c'est un retour à la configuration par défaut **de ce firmware**, pas au firmware Meraki. Un appui court n'a aucun effet.
-
-Le bouton est câblé sur la **GPIO 4** de la puce Vitesse (0 = enfoncé). Il est surveillé par `sbin/sui-button`, environ 3 minutes après la mise sous tension.
-
----
-
-## 11. Ventilation
-
-Le ventilateur est piloté en PWM (`/sys/class/hwmon/*/duty`, pilote `vcoreiiipwmfan`) selon **la plus haute** de ces températures :
-- carte et puce de commutation (capteur **TMP411**) ;
-- contrôleur PoE (**PD690xx**).
-
-| Préréglage | Comportement |
+| Data | OIDs |
 |---|---|
-| Silencieux | 30 % jusqu'à 50 °C, puis jusqu'à 70 % à 72 °C |
-| **Équilibré** (par défaut) | 30 % jusqu'à 45 °C, puis jusqu'à 100 % à 70 °C |
-| Performance | 40 % jusqu'à 38 °C, puis jusqu'à 100 % à 60 °C |
-| Plein régime | 100 % en permanence |
-
-La vitesse minimale est de **30 %** : en dessous, le ventilateur risque de caler. **Sécurité permanente** : 100 % au-delà de 75 °C, ou si aucun capteur ne répond. Une nouvelle consigne s'applique immédiatement.
-
----
-
-## 12. Accès SSH
-
-- Commande : `ssh root@ADRESSE_DU_SWITCH`.
-- Mot de passe : **le numéro de série** (fixé au premier démarrage par `S14passwd` de meraki-builder).
-- Pour une connexion par clé, ajoutez votre clé publique dans `/root/.ssh/authorized_keys`.
-- `/etc` et `/root` sont persistants (jffs2). Le reste du système est en lecture seule.
-
-Commandes utiles :
+| System | `sysName`, `sysDescr` (model, interface version, kernel), `sysUpTime`, `sysLocation`, `sysContact` |
+| IF-MIB `ifTable` | 24 interfaces: `ifDescr` (`Port N`), `ifType`, `ifMtu`, `ifSpeed`, `ifAdminStatus`, `ifOperStatus`, 32-bit octet and packet counters |
+| IF-MIB `ifXTable` | `ifName` (`portN`), **64-bit counters** (`ifHCInOctets`, `ifHCOutOctets`…), `ifHighSpeed`, `ifAlias` (port name set in the interface) |
+| POWER-ETHERNET-MIB | per port: `pethPsePortAdminEnable`, `pethPsePortDetectionStatus` (3 = powering a device); total: `pethMainPsePower` (370 W), `pethMainPseConsumptionPower` |
 
 ```sh
-cat /click/sw0_ctrl/port_status                  # lien de chaque port
-cat /click/switch_port_table/dump_pport_vlans    # VLAN par port
-pd690xx -l                                       # PoE par port
-cat /tmp/sui/actions.log                         # actions de l'interface
-/etc/init.d/S95switchui restart                  # redémarrer l'interface
+snmpwalk -v2c -c MY_COMMUNITY SWITCH_ADDRESS .1.3.6.1.2.1.31.1.1.1      # ifXTable
 ```
+
+It works with LibreNMS, Zabbix, PRTG, Observium, Grafana… The port counters come from the Meraki switching engine. They are refreshed every 10 seconds.
 
 ---
 
-## 13. Revenir au firmware Meraki
+## 11. Reset button
 
-Dessoudez la puce et réécrivez la sauvegarde d'origine :
+**Hold the front reset button for 10 seconds** while the switch is running. The power LED turns orange, then the switch reboots with:
+- the IP address in **DHCP** on VLAN 1;
+- the web login **admin / serial number**;
+- **default** ports, VLANs and system settings.
+
+The firmware, the modules and the interface stay installed: this resets **this firmware's** configuration, it does not bring back the Meraki firmware. A short press does nothing.
+
+The button is wired to **GPIO 4** of the Vitesse chip (0 = pressed). It is watched by `sbin/sui-button`, from about 3 minutes after power-on.
+
+---
+
+## 12. Cooling
+
+The fan is PWM-driven (`/sys/class/hwmon/*/duty`, `vcoreiiipwmfan` driver) from **the highest** of these temperatures:
+- board and switching chip (**TMP411** sensor);
+- PoE controller (**PD690xx**).
+
+| Preset | Behaviour |
+|---|---|
+| Quiet | 30 % up to 50 °C, then up to 70 % at 72 °C |
+| **Balanced** (default) | 30 % up to 45 °C, then up to 100 % at 70 °C |
+| Performance | 40 % up to 38 °C, then up to 100 % at 60 °C |
+| Full speed | 100 % at all times |
+
+The minimum speed is **30 %**: below that, the fan may stall. **Permanent safety**: 100 % above 75 °C, or if no sensor responds. A new setting takes effect immediately.
+
+---
+
+## 13. SSH access
+
+- Command: `ssh root@SWITCH_ADDRESS`.
+- Password: **the serial number** (set at first boot by meraki-builder's `S14passwd`).
+- For key-based login, add your public key to `/root/.ssh/authorized_keys`.
+- `/etc` and `/root` are persistent (jffs2). The rest of the system is read-only.
+
+Useful commands:
 
 ```sh
-./minipro -p "MX25L12845E@SOP16" -w sauvegarde-1.bin
-./minipro -p "MX25L12845E@SOP16" -r relecture.bin && sha256sum sauvegarde-1.bin relecture.bin
+cat /click/sw0_ctrl/port_status                  # link of each port
+cat /click/switch_port_table/dump_pport_vlans    # VLANs per port
+cat /click/client_ip_table/list                  # devices seen behind each port
+pd690xx -l                                       # PoE per port
+cat /tmp/sui/actions.log                         # actions done from the interface
+/etc/init.d/S95switchui restart                  # restart the interface
 ```
 
-Ressoudez la puce : le switch redémarre exactement comme avant, puisque la NAND n'a jamais été modifiée.
+---
+
+## 14. Going back to the Meraki firmware
+
+Desolder the chip and write the original backup:
+
+```sh
+./minipro -p "MX25L12845E@SOP16" -w backup-1.bin
+./minipro -p "MX25L12845E@SOP16" -r readback.bin && sha256sum backup-1.bin readback.bin
+```
+
+Solder the chip back: the switch boots exactly as before, since the NAND was never modified.
 
 ---
 
-## 14. Dépannage
+## 15. Troubleshooting
 
-| Symptôme | Cause probable et solution |
+| Symptom | Likely cause and fix |
 |---|---|
-| Rien sur la console | mauvaise broche : le TX du switch est J3 **broche 2**, la masse broche 4. Vérifiez 115200 8N1 |
-| Caractères illisibles sur la console | masse mal reliée, ou adaptateur pas en 3,3 V |
-| L'adaptateur USB se déconnecte à l'allumage | branchez l'USB **après** avoir allumé le switch |
-| Le switch ne démarre plus du tout | puce mal ressoudée, ou image mal écrite : relire la puce et comparer l'empreinte |
-| `part1 contient des modules pour 3.18.x, le noyau est 3.18.131` | le firmware Meraki de votre NAND n'est pas celui testé : voir ci-dessous |
-| Démarrage figé pendant le chargement des modules | couper et remettre le courant : au démarrage suivant, le chargement est **sauté** automatiquement (fichier `/etc/kmods_pending`) et la console donne un shell. Relancer avec `/etc/init.d/S08kmods start` |
-| Pas d'adresse IP | sans DHCP au bout de 60 s, le switch prend `169.254.0.10`. Brancher un port sur un réseau avec DHCP, ou régler une adresse fixe |
-| Page web inaccessible après un changement d'adresse ou de VLAN | [bouton reset](#10-bouton-reset) 10 s, ou console série |
-| Ports actifs mais aucun trafic | vérifier dans la console que les 6 modules sont chargés (`lsmod`) et que la ligne `Router could not be initialized` n'apparaît pas |
+| Nothing on the console | wrong pin: the switch TX is J3 **pin 2**, ground is pin 4. Check 115200 8N1 |
+| Garbage on the console | poor ground connection, or adapter not at 3.3 V |
+| The USB adapter disconnects at power-on | plug the USB in **after** powering on the switch |
+| The switch does not boot at all | chip badly soldered, or image badly written: read the chip back and compare the checksum |
+| `part1 contient des modules pour 3.18.x, le noyau est 3.18.131` | the Meraki firmware in your NAND is not the tested one: see below |
+| Boot hangs while loading the modules | power-cycle: at the next boot, module loading is **skipped** automatically (`/etc/kmods_pending` flag) and the console gives a shell. Try again with `/etc/init.d/S08kmods start` |
+| No IP address | without DHCP after 60 s, the switch uses `169.254.0.10`. Connect a port to a network with DHCP, or set a static address |
+| Web page unreachable after an address or VLAN change | [reset button](#11-reset-button) for 10 s, or serial console |
+| Ports up but no traffic | check on the console that the 6 modules are loaded (`lsmod`) and that `Router could not be initialized` does not appear |
+| A disabled port keeps an orange LED | the orange LED shows **PoE power**: the device stays powered when only the data link is disabled. Turn PoE off as well |
 
-### Adapter à un autre firmware Meraki
+### Adapting to another Meraki firmware
 
-Les modules Meraki ne se chargent que dans un noyau **construit exactement comme celui de Meraki**. Si votre NAND contient un autre firmware :
-1. **Version** : la console affiche `part1 contient des modules pour 3.18.X`. Il faut un noyau `3.18.X-meraki` : adaptez la boucle des mises à jour dans `firmware/kernel/build-kernel.sh`. La chaîne `vermagic` des modules doit être identique (`strings vtss_core.ko | grep vermagic`).
-2. **`struct module`** : comparez la taille de la section `.gnu.linkonce.this_module` et les décalages de `init_module` et `cleanup_module` (`readelf -SW`, `readelf -r`) entre un module Meraki et un module compilé avec votre noyau. Ici, `CONFIG_MODULE_SIG=y` ajoutait les 4 octets manquants.
-3. **`struct sk_buff`** : comparez les décalages lus par `vc_click.ko` (désassemblage de `FromVitesse::alloc_pkt` et `xtr_cb`) avec `offsetof()` dans votre noyau. Ici, `cb[]` devait faire 96 octets.
-4. **Symboles manquants** (`Unknown symbol` au chargement) : fournissez-les dans `firmware/assoc_stub`, comme `register_click_association_table_cbs`.
+The Meraki modules only load into a kernel **built exactly like Meraki's**. If your NAND holds another firmware:
+1. **Version**: the console shows `part1 contient des modules pour 3.18.X`. You need a `3.18.X-meraki` kernel: adapt the stable update loop in `firmware/kernel/build-kernel.sh`. The modules' `vermagic` string must match (`strings vtss_core.ko | grep vermagic`).
+2. **`struct module`**: compare the size of the `.gnu.linkonce.this_module` section and the offsets of `init_module` and `cleanup_module` (`readelf -SW`, `readelf -r`) between a Meraki module and a module built with your kernel. Here, `CONFIG_MODULE_SIG=y` added the 4 missing bytes.
+3. **`struct sk_buff`**: compare the offsets read by `vc_click.ko` (disassembly of `FromVitesse::alloc_pkt` and `xtr_cb`) with `offsetof()` in your kernel. Here, `cb[]` had to be 96 bytes.
+4. **Missing symbols** (`Unknown symbol` when loading): provide them in `firmware/assoc_stub`, like `register_click_association_table_cbs`.
 
 ---
 
-## 15. Fonctionnement technique
+## 16. How it works
 
-**Démarrage**
-1. RedBoot (`redboot-nocrc-sz`) charge l'en-tête `SPIM` à `0x40000`, puis décompresse et lance le noyau à `0x81000000`.
-2. Le noyau monte le squashfs (`root=/dev/mtdblock3`), puis la zone jffs2 en overlay sur `/etc` et `/root`.
-3. `S08kmods` trouve l'archive gzip du firmware Meraki dans la partition UBI `part1` (puis `part2`) de la NAND, avec `find_hdr`. Il en extrait `lib/modules/*` et `etc/switch.template`, vérifie la version, puis charge `vtss_core` → `assoc_stub` → `proclikefs` → `merakiclick` → `elts_meraki` → `vc_click`.
-4. `S09clickinit` charge dans le moteur Click (`/click/config`) le modèle de configuration **extrait du même firmware** que les modules.
-5. `S10clickconfig` (meraki-builder) configure le switch « vierge » et obtient l'adresse en DHCP. `S11poe` initialise le contrôleur PoE.
-6. `S95switchui` :
-   - copie l'interface vers `/etc/switchui` au premier démarrage ;
-   - règle le DNS et la synchronisation NTP ;
-   - réapplique la configuration enregistrée ;
-   - lance le collecteur d'historique, le régulateur du ventilateur, la surveillance du bouton reset et le serveur web.
+**Boot sequence**
+1. RedBoot (`redboot-nocrc-sz`) loads the `SPIM` header at `0x40000`, then decompresses and starts the kernel at `0x81000000`.
+2. The kernel mounts the squashfs (`root=/dev/mtdblock3`), then the jffs2 area as an overlay on `/etc` and `/root`.
+3. `S08kmods` finds the gzip archive of the Meraki firmware in UBI volume `part1` (then `part2`) of the NAND, with `find_hdr`. It extracts `lib/modules/*` and `etc/switch.template`, checks the version, then loads `vtss_core` → `assoc_stub` → `proclikefs` → `merakiclick` → `elts_meraki` → `vc_click`.
+4. `S09clickinit` loads into the Click engine (`/click/config`) the configuration template **taken from the same firmware** as the modules.
+5. `S10clickconfig` (meraki-builder) sets up a "blank" switch and gets the address by DHCP. `S11poe` initialises the PoE controller.
+6. `S95switchui`:
+   - copies the interface to `/etc/switchui` at first boot;
+   - sets up DNS and NTP sync;
+   - applies the saved configuration again;
+   - starts the history collector, the fan controller, the reset button watcher, the SNMP agent and the web server.
 
-**Pourquoi un noyau 3.18.131 modifié.** Meraki n'a publié que les sources du 3.18.123. Les modules du firmware 2023 exigent :
+**Why a modified 3.18.131 kernel.** Meraki only published the 3.18.123 sources. The 2023 firmware modules require:
 
-| Exigence | Solution |
+| Requirement | Solution |
 |---|---|
-| `vermagic = 3.18.131-meraki mod_unload MIPS32_R2 32BIT` | mises à jour officielles 3.18.124 à 3.18.131 + `CONFIG_LOCALVERSION="-meraki"` |
-| `struct module` de 0x15c octets (`init` à 0xc4) | `CONFIG_MODULE_SIG=y` (non imposé : les modules signés par Meraki se chargent avec un simple avertissement) |
-| `sk_buff.cb` de 96 octets (données à 0xe0) | correctif `0001-skbuff-cb-96-octets.patch` |
-| `register_click_association_table_cbs` et `unregister_…` (noyau Meraki, code non publié) | module `assoc_stub` qui les fournit |
+| `vermagic = 3.18.131-meraki mod_unload MIPS32_R2 32BIT` | official stable updates 3.18.124 to 3.18.131 + `CONFIG_LOCALVERSION="-meraki"` |
+| `struct module` of 0x15c bytes (`init` at 0xc4) | `CONFIG_MODULE_SIG=y` (not enforced: modules signed by Meraki load with a simple warning) |
+| `sk_buff.cb` of 96 bytes (data at 0xe0) | patch `0001-skbuff-cb-96-octets.patch` |
+| `register_click_association_table_cbs` and `unregister_…` (Meraki kernel, unpublished code) | `assoc_stub` module providing them |
 
-Les modules n'utilisent pas `MODVERSIONS`, donc seuls la version et la disposition des structures comptent.
+The modules do not use `MODVERSIONS`, so only the version string and the structure layouts matter.
 
-**Interface.** C'est un serveur `busybox httpd` (authentification Basic, CGI) avec deux scripts shell :
-- `cgi-bin/api` lit et écrit les « handlers » Click, par exemple :
-  - `switch_port_table/set_port_phy_cfgs` (`PORT n, MODE aneg|off|forced, FORCE_SPEED 100fdx…`) ;
-  - `set_vlan_allports_conf` (`PORT n, ALLOWED_VLANS "…", PVID…`) ;
-  - `stp/set_many_port_cfgs`, `set_port_isolation`, `set_port_storm_control` ;
-  - `sw0_ctrl/mirror_port` et `mirror_ports` (`INGRESS_PORTS 1-3, EGRESS_PORTS 5`), `veriphy_start`… ;
-- `cgi-bin/update` gère les paquets `.msu`.
+**Interface.** A `busybox httpd` server (Basic authentication, CGI) runs two shell scripts:
+- `cgi-bin/api` reads and writes the Click "handlers", for example:
+  - `switch_port_table/set_port_phy_cfgs` (`PORT n, MODE aneg|off|forced, FORCE_SPEED 100fdx…`);
+  - `set_vlan_allports_conf` (`PORT n, ALLOWED_VLANS "…", PVID…`);
+  - `stp/set_many_port_cfgs`, `set_port_isolation`, `set_port_storm_control`;
+  - `sw0_ctrl/mirror_port` and `mirror_ports` (`INGRESS_PORTS 1-3, EGRESS_PORTS 5`), `veriphy_start`, `client_ip_table/list`, `sfp_mgr/eeproms`…;
+- `cgi-bin/update` handles `.msu` packages.
 
-Les pages sont en HTML, CSS et JavaScript sans dépendance externe, et les graphiques sont dessinés en canvas.
+The pages are plain HTML, CSS and JavaScript with no external dependency, and the charts are drawn on canvas. The interface source text is French; `www/i18n.js` translates it to English.
+
+**SNMP.** net-snmp answers the system MIB itself. IF-MIB and POWER-ETHERNET-MIB are delegated (`pass_persist`) to `sbin/sui-snmp`, which serves a table generated every 10 seconds by `sbin/sui-snmp-table` from the Click counters.
 
 ---
 
-## 16. Contenu du dépôt
+## 17. Repository layout
 
 ```
-build.sh                         construction complète de l'image
-switchui/                        interface d'administration (installée dans /etc/switchui)
-  www/                           pages, cgi-bin/api, cgi-bin/update
-  lib/sui.sh                     configuration et application au switch
-  sbin/sui-collect               historique (débits, PoE, températures)
-  sbin/sui-fan                   régulation du ventilateur
-  sbin/sui-button                bouton reset
-  init/S95switchui               démarrage de l'interface
-  bin/httpd                      serveur web (busybox, voir firmware/httpd)
-tools/make-update.sh             fabrication des paquets .msu
+build.sh                         full image build
+switchui/                        web interface (installed in /etc/switchui)
+  www/                           pages, translations (i18n.js), cgi-bin/api, cgi-bin/update
+  lib/sui.sh                     configuration and applying it to the switch
+  sbin/sui-collect               history (traffic, PoE, temperatures)
+  sbin/sui-fan                   fan control
+  sbin/sui-button                reset button
+  sbin/sui-snmp, sui-snmp-table  SNMP data for the ports
+  init/S95switchui               interface startup
+  bin/httpd                      web server (busybox, see firmware/httpd)
+extras/switchui-snmp/            SNMP agent for updating already installed switches
+tools/make-update.sh             builds .msu packages
 firmware/
-  kernel/                        script, configuration et correctif du noyau 3.18.131-meraki
-  assoc_stub/                    module de compatibilité
-  rootfs/                        configuration buildroot et scripts de démarrage modifiés
-  httpd/                         construction du serveur web
-  image/make-image.sh            assemblage de l'image 16 Mo
-docs/                            photos et captures
+  kernel/                        script, configuration and patch for kernel 3.18.131-meraki
+  assoc_stub/                    compatibility module
+  rootfs/                        buildroot configuration and modified boot scripts
+  httpd/                         web server build
+  image/make-image.sh            assembles the 16 MB image
+docs/                            photos and screenshots
 ```
 
 ---
 
-## 17. Crédits et licences
+## 18. Credits and licences
 
-- **Hal Martin** : [meraki-builder](https://github.com/halmartin/meraki-builder) (GPL v3), RedBoot modifié et miroirs des sources GPL Meraki ([switch-11-22-ms220](https://github.com/halmartin/switch-11-22-ms220), [MS42-GPL-sources-3-18-122](https://github.com/halmartin/MS42-GPL-sources-3-18-122)). Ce projet n'existerait pas sans ce travail.
-- Noyau Linux, buildroot, busybox : GPL v2.
-- Les scripts de démarrage dérivés de meraki-builder (`firmware/rootfs/overlay`) restent sous **GPL v3**. Le reste de ce dépôt est publié sous la même licence.
-- **Aucun fichier Meraki n'est distribué ici.** Les modules propriétaires et le modèle de configuration sont lus, à chaque démarrage, dans le firmware Meraki déjà présent dans la NAND de votre propre switch.
-- Cisco et Meraki sont des marques de Cisco Systems, Inc. Ce projet n'est ni affilié à Cisco, ni approuvé par Cisco.
+- **Hal Martin**: [meraki-builder](https://github.com/halmartin/meraki-builder) (GPL v3), the modified RedBoot and the mirrors of the Meraki GPL sources ([switch-11-22-ms220](https://github.com/halmartin/switch-11-22-ms220), [MS42-GPL-sources-3-18-122](https://github.com/halmartin/MS42-GPL-sources-3-18-122)). This project would not exist without that work.
+- Linux kernel, buildroot, busybox: GPL v2. net-snmp: BSD licences.
+- The boot scripts derived from meraki-builder (`firmware/rootfs/overlay`) remain under **GPL v3**. The rest of this repository is released under the same licence.
+- **No Meraki file is distributed here.** The proprietary modules and the configuration template are read, at every boot, from the Meraki firmware already present in the NAND of your own switch.
+- Cisco and Meraki are trademarks of Cisco Systems, Inc. This project is neither affiliated with nor endorsed by Cisco.

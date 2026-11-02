@@ -28,6 +28,10 @@ while true; do
         tail -n 1440 $RUN/h60 > $RUN/h60.tmp && mv $RUN/h60.tmp $RUN/h60
     fi
     tail -n 360 $RUN/h10 > $RUN/h10.tmp && mv $RUN/h10.tmp $RUN/h10
+    # table SNMP des ports (seulement si l'agent SNMP est activé)
+    if grep -q "^SNMP='1'" /etc/switchui/system.conf 2>/dev/null; then
+        /etc/switchui/sbin/sui-snmp-table > $RUN/snmp.tbl.new && mv $RUN/snmp.tbl.new $RUN/snmp.tbl && echo $t > $RUN/snmp.stamp
+    fi
     n=$((n+1))
     sleep 10
 done

@@ -19,6 +19,7 @@ nav { display: flex; flex-wrap: wrap; gap: 2px; flex: 1; }
 nav button { border: 0; background: none; color: var(--mut); padding: 7px 11px; border-radius: 6px; cursor: pointer; font: inherit; }
 nav button:hover { background: var(--bg); color: var(--fg); }
 nav button.on { background: var(--acc); color: #fff; }
+#lang { padding: 2px 4px; font-size: 12px; margin-left: 8px; }
 .hstat { display: flex; align-items: center; gap: 6px; color: var(--mut); white-space: nowrap; }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--off); }
 .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }

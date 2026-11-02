@@ -1,0 +1,35 @@
+#!/bin/sh
+# Programme « pass_persist » de snmpd : répond aux requêtes get / getnext sur
+# IF-MIB et POWER-ETHERNET-MIB à partir de /tmp/sui/snmp.tbl (déjà triée,
+# régénérée toutes les 10 s par sui-collect). La table est rechargée quand
+# /tmp/sui/snmp.stamp change.
+[ -s /tmp/sui/snmp.tbl ] || { mkdir -p /tmp/sui; /etc/switchui/sbin/sui-snmp-table > /tmp/sui/snmp.tbl; date +%s > /tmp/sui/snmp.stamp; }
+exec awk '
+# compare deux OID composant par composant : -1, 0 ou 1
+function cmp(a, b,   na, nb, x, y, i) {
+    na = split(a, x, "."); nb = split(b, y, ".")
+    for (i = 2; i <= na && i <= nb; i++) { if (x[i] + 0 < y[i] + 0) return -1; if (x[i] + 0 > y[i] + 0) return 1 }
+    return na < nb ? -1 : na > nb ? 1 : 0
+}
+function load(   l, f, st) {
+    st = ""; getline st < "/tmp/sui/snmp.stamp"; close("/tmp/sui/snmp.stamp")
+    if (st == stamp && n > 0) return
+    n = 0; delete I
+    while ((getline l < "/tmp/sui/snmp.tbl") > 0) { split(l, f, "|"); n++; O[n] = f[1]; T[n] = f[2]; V[n] = f[3]; I[f[1]] = n }
+    close("/tmp/sui/snmp.tbl"); stamp = st
+}
+function out(i) { print O[i]; print T[i]; print V[i]; fflush() }
+{
+    cmd = $0
+    if (cmd == "PING") { print "PONG"; fflush(); next }
+    if ((getline oid) <= 0) exit
+    if (cmd == "set") { getline junk; print "not-writable"; fflush(); next }
+    load(); r = 0
+    if (cmd == "get") r = (oid in I) ? I[oid] : 0
+    else if (cmd == "getnext") {
+        if (oid in I) r = I[oid] + 1
+        else for (i = 1; i <= n; i++) if (cmp(O[i], oid) > 0) { r = i; break }
+        if (r > n) r = 0
+    }
+    if (r) out(r); else { print "NONE"; fflush() }
+}'

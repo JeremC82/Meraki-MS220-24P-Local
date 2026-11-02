@@ -48,7 +48,7 @@ status_json() {
         -v temp="$(pd690xx -t 2>/dev/null | head -1 | cut -d' ' -f1)" \
         -v volt="$(pd690xx -s 2>/dev/null | head -1 | cut -d' ' -f1)" \
         -v kern="$(uname -r)" -v uiver="$(cat /etc/switchui/VERSION 2>/dev/null)" -v prev="$([ -d /etc/switchui.prev ] && echo 1 || echo 0)" -v ipinfo="$(tr '\n' ';' < $C/uplinkstate/dhcpc_state_for_brain)" \
-        -v ipmode="$IP_MODE" -v fan="$(cat $SUI_RUN/fan 2>/dev/null)" '
+        -v ipmode="$IP_MODE" -v fan="$(cat $SUI_RUN/fan 2>/dev/null)" -v snmprun="$(kill -0 $(cat /var/run/sui-snmpd.pid 2>/dev/null) 2>/dev/null && echo 1)" '
     function js(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); return "\"" s "\"" }
     FILENAME ~ /ports.conf/ { split($0, f, "|"); P[f[1]] = $0; next }
     FILENAME ~ /dump_pports$/ && FNR > 1 { up_[$1]=$2; mbps[$1]=$3; fdx[$1]=$4; next }
@@ -63,7 +63,7 @@ status_json() {
         split(mem, m, " "); split(ipinfo, ii, ";")
         for (k in ii) { split(ii[k], kv, "="); IP[kv[1]] = kv[2] }
         printf "{\"ok\":true,\"system\":{\"hostname\":%s,\"model\":%s,\"mac\":%s,\"kernel\":%s,", js(host), js(model), js(mac), js(kern)
-        printf "\"ui_version\":%s,\"has_prev\":%d,", js(uiver), prev
+        printf "\"ui_version\":%s,\"has_prev\":%d,\"snmp_running\":%s,", js(uiver), prev, (snmprun ? "true" : "false")
         split(fan, F, " "); printf "\"fan_pct\":%s,\"temp_board\":%s,\"temp_asic\":%s,", (fan==""?"null":F[1]), (fan==""?"null":F[2]/1000), (fan==""?"null":F[3]/1000)
         printf "\"uptime\":%d,\"load\":%s,\"mem_total\":%d,\"mem_avail\":%d,", up, js(load), m[1], m[2]
         printf "\"poe\":%d,\"poe_temp\":%s,\"poe_volt\":%s,\"poe_total\":%.1f,", poe, (temp==""?"null":temp), (volt==""?"null":volt), ptot
@@ -135,7 +135,7 @@ set_port)
 set_system)
     [ "$REQUEST_METHOD" = POST ] || err "POST requis"
     load_sys
-    for k in HOSTNAME IP_MODE IP_ADDR IP_MASK IP_GW IP_DNS MGMT_VLAN STP_PRIO LLDP IGMP MIRROR_DEST MIRROR_IN MIRROR_OUT FAN_MODE FAN_MANUAL FAN_MIN FAN_MAX FAN_T_LOW FAN_T_HIGH; do
+    for k in HOSTNAME IP_MODE IP_ADDR IP_MASK IP_GW IP_DNS MGMT_VLAN STP_PRIO LLDP IGMP MIRROR_DEST MIRROR_IN MIRROR_OUT FAN_MODE FAN_MANUAL FAN_MIN FAN_MAX FAN_T_LOW FAN_T_HIGH SNMP SNMP_COMMUNITY SNMP_ALLOW SNMP_LOCATION SNMP_CONTACT; do
         v=$(param $k)
         # paramètre absent : garde la valeur actuelle
         printf '%s' "$PARAMS" | tr '&' '\n' | grep -q "^$k=" || v=$(eval echo "\$$k")
@@ -147,6 +147,10 @@ set_system)
             LLDP|IGMP) v=$(b01 "$v") ;;
             MIRROR_IN|MIRROR_OUT) v=$(printf '%s' "$v" | tr -cd '0-9,-') ;;
             FAN_MODE) [ "$v" = manual ] || v=auto ;;
+            SNMP) v=$(b01 "$v") ;;
+            SNMP_COMMUNITY) v=$(printf '%s' "$v" | tr -cd 'A-Za-z0-9_.-' | cut -c1-32); [ -z "$v" ] && v=public ;;
+            SNMP_ALLOW) v=$(printf '%s' "$v" | tr -cd '0-9./'); [ -z "$v" ] && v=default ;;
+            SNMP_LOCATION|SNMP_CONTACT) v=$(printf '%s' "$v" | tr -cd 'A-Za-z0-9 _.,@()+-' | cut -c1-60) ;;
             FAN_MANUAL|FAN_MIN|FAN_MAX) v=$(num "$v"); [ -z "$v" ] && v=30; [ "$v" -lt 30 ] && v=30; [ "$v" -gt 100 ] && v=100 ;;
             FAN_T_LOW|FAN_T_HIGH) v=$(num "$v"); [ -z "$v" ] && v=50; [ "$v" -gt 74 ] && v=74 ;;
         esac
@@ -156,6 +160,7 @@ set_system)
     # réveille le régulateur du ventilateur pour appliquer la consigne tout de suite
     kill -USR1 $(cat /var/run/sui-fan.pid 2>/dev/null) 2>/dev/null
     apply_system
+    apply_snmp
     ok ;;
 set_vlans)
     [ "$REQUEST_METHOD" = POST ] || err "POST requis"

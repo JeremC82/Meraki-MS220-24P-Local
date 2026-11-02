@@ -1,0 +1,64 @@
+#!/bin/sh
+# Produit la table SNMP des ports, déjà dans l'ordre des OID : oid|type|valeur
+#   IF-MIB              ifNumber, ifTable, ifXTable (compteurs 64 bits)
+#   POWER-ETHERNET-MIB  pethPsePortTable, pethMainPseTable
+# Appelé par sui-collect toutes les 10 s quand le SNMP est activé.
+C=/click
+awk '
+function add(oid, type, val) { print oid "|" type "|" val }
+function c32(v) { return v % 4294967296 }
+FILENAME ~ /ports.conf/ { split($0, f, "|"); NAME[f[1]] = f[2]; EN[f[1]] = f[3]; if (f[1] + 0 > N) N = f[1] + 0; next }
+FILENAME ~ /counters_meraki/ && FNR > 1 { RXB[$1] = $2; RXP[$1] = $3; RXBC[$1] = $4; RXMC[$1] = $5; TXB[$1] = $7; TXP[$1] = $8; next }
+FILENAME ~ /port_status/ && FNR > 1 { LINK[$1] = $2; MODE[$1] = $3; next }
+FILENAME ~ /poe.txt/ && $1 ~ /^[0-9]+$/ { PST[$1] = $2; PW[$1] = $NF; PT += $NF; HASPOE = 1; next }
+END {
+    for (p = 1; p <= N; p++) {
+        sp = MODE[p] ~ /^1G/ ? 1000 : MODE[p] ~ /^100/ ? 100 : MODE[p] ~ /^10/ ? 10 : 0
+        if (!LINK[p]) sp = 0
+        UC[p] = RXP[p] - RXBC[p] - RXMC[p]; if (UC[p] < 0) UC[p] = 0
+        SP[p] = sp
+    }
+    add(".1.3.6.1.2.1.2.1.0", "integer", N)
+    # ifTable : colonne par colonne, puis port par port (ordre SNMP)
+    split("1 2 3 4 5 7 8 10 11 12 16 17", COLS, " ")
+    for (c = 1; c <= 12; c++) for (p = 1; p <= N; p++) {
+        o = ".1.3.6.1.2.1.2.2.1." COLS[c] "." p; k = COLS[c]
+        if (k == 1) add(o, "integer", p)
+        else if (k == 2) add(o, "string", "Port " p)
+        else if (k == 3) add(o, "integer", 6)
+        else if (k == 4) add(o, "integer", 9600)
+        else if (k == 5) add(o, "gauge", SP[p] * 1000000)
+        else if (k == 7) add(o, "integer", EN[p] == "0" ? 2 : 1)
+        else if (k == 8) add(o, "integer", LINK[p] ? 1 : 2)
+        else if (k == 10) add(o, "counter", c32(RXB[p]))
+        else if (k == 11) add(o, "counter", c32(UC[p]))
+        else if (k == 12) add(o, "counter", c32(RXBC[p] + RXMC[p]))
+        else if (k == 16) add(o, "counter", c32(TXB[p]))
+        else if (k == 17) add(o, "counter", c32(TXP[p]))
+    }
+    # ifXTable
+    split("1 2 3 6 7 8 9 10 11 15 18", XC, " ")
+    for (c = 1; c <= 11; c++) for (p = 1; p <= N; p++) {
+        o = ".1.3.6.1.2.1.31.1.1.1." XC[c] "." p; k = XC[c]
+        if (k == 1) add(o, "string", "port" p)
+        else if (k == 2) add(o, "counter", c32(RXMC[p]))
+        else if (k == 3) add(o, "counter", c32(RXBC[p]))
+        else if (k == 6) add(o, "counter64", sprintf("%.0f", RXB[p]))
+        else if (k == 7) add(o, "counter64", sprintf("%.0f", UC[p]))
+        else if (k == 8) add(o, "counter64", sprintf("%.0f", RXMC[p]))
+        else if (k == 9) add(o, "counter64", sprintf("%.0f", RXBC[p]))
+        else if (k == 10) add(o, "counter64", sprintf("%.0f", TXB[p]))
+        else if (k == 11) add(o, "counter64", sprintf("%.0f", TXP[p]))
+        else if (k == 15) add(o, "gauge", SP[p])
+        else if (k == 18) add(o, "string", NAME[p])
+    }
+    if (HASPOE) {
+        # pethPsePortAdminEnable (1 vrai, 2 faux)
+        for (p = 1; p <= N; p++) add(".1.3.6.1.2.1.105.1.1.1.3.1." p, "integer", PST[p] == "Enabled" ? 1 : 2)
+        # pethPsePortDetectionStatus (1 désactivé, 2 recherche, 3 alimente)
+        for (p = 1; p <= N; p++) add(".1.3.6.1.2.1.105.1.1.1.6.1." p, "integer", PST[p] != "Enabled" ? 1 : (PW[p] > 0 ? 3 : 2))
+        add(".1.3.6.1.2.1.105.1.3.1.1.2.1", "gauge", 370)
+        add(".1.3.6.1.2.1.105.1.3.1.1.3.1", "integer", 1)
+        add(".1.3.6.1.2.1.105.1.3.1.1.4.1", "gauge", int(PT + 0.5))
+    }
+}' /etc/switchui/ports.conf $C/sw0_ctrl/port_counters_meraki $C/sw0_ctrl/port_status /tmp/sui/poe.txt 2>/dev/null

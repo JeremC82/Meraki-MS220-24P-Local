@@ -6,6 +6,7 @@
 <title>Switch – Administration</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="style.css">
+<script src="i18n.js"></script>
 </head>
 <body>
 <header>
@@ -21,7 +22,8 @@
     <button data-tab="diag">Diagnostic</button>
     <button data-tab="system">Système</button>
   </nav>
-  <div class="hstat"><span id="h-dot" class="dot"></span><span id="h-ip"></span></div>
+  <div class="hstat"><span id="h-dot" class="dot"></span><span id="h-ip"></span>
+    <select id="lang" title="Langue / Language"><option value="fr">FR</option><option value="en">EN</option></select></div>
 </header>
 
 <main>
@@ -208,6 +210,18 @@
       <label class="chk"><input type="checkbox" id="s-igmp"> IGMP snooping (multicast)</label>
     </div>
     <button class="btn pri" id="s-save">Enregistrer et appliquer</button>
+  </div>
+  <div class="card">
+    <h3>SNMP <small id="sn-state"></small></h3>
+    <div class="form">
+      <label class="chk"><input type="checkbox" id="sn-on"> Activer l'agent SNMP (v2c, lecture seule, port UDP 161)</label>
+      <label>Communauté<input id="sn-com" maxlength="32"></label>
+      <label>Adresses autorisées<input id="sn-allow" placeholder="default = toutes, ou 192.168.1.0/24"></label>
+      <label>Emplacement (sysLocation)<input id="sn-loc" maxlength="60"></label>
+      <label>Contact (sysContact)<input id="sn-contact" maxlength="60"></label>
+    </div>
+    <p class="hint">Données publiées : système (nom, description, durée de fonctionnement), IF-MIB pour les 24 ports (état, vitesse, compteurs 32 et 64 bits, nom du port en ifAlias) et POWER-ETHERNET-MIB (état PoE par port, consommation totale). Compatible LibreNMS, Zabbix, PRTG, Observium, Grafana… Choisissez une communauté différente de « public ».</p>
+    <button class="btn pri" id="sn-save">Enregistrer et appliquer</button>
   </div>
   <div class="card">
     <h3>Accès à l'interface</h3>

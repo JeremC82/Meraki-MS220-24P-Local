@@ -33,6 +33,7 @@ start() {
     # réapplique la configuration enregistrée
     apply_system
     apply_all_ports
+    apply_snmp
     sui_log "configuration appliquée au démarrage"
     start-stop-daemon -S -b -m -p /var/run/sui-collect.pid -x $SUI/sbin/sui-collect
     start-stop-daemon -S -b -m -p /var/run/sui-fan.pid -x $SUI/sbin/sui-fan
@@ -42,7 +43,7 @@ start() {
 }
 
 stop() {
-    for d in sui-collect sui-fan sui-button; do start-stop-daemon -K -q -p /var/run/$d.pid; done
+    for d in sui-collect sui-fan sui-button sui-snmpd; do start-stop-daemon -K -q -p /var/run/$d.pid; done
     killall httpd 2>/dev/null
 }
 

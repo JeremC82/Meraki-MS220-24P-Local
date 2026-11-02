@@ -53,6 +53,11 @@ FAN_MIN='30'
 FAN_T_LOW='45'
 FAN_T_HIGH='70'
 FAN_MAX='100'
+SNMP='0'
+SNMP_COMMUNITY='public'
+SNMP_ALLOW='default'
+SNMP_LOCATION=''
+SNMP_CONTACT=''
 EOF
 }
 
@@ -146,6 +151,28 @@ apply_system() {
         click_write set_host_ip/run "$IP_ADDR $IP_MASK $IP_GW 1500 $bc $MGMT_VLAN"
         [ -n "$IP_DNS" ] && echo "nameserver $IP_DNS" > /etc/resolv.conf
     fi
+}
+
+# agent SNMP (net-snmp, lecture seule) : ports via sbin/sui-snmp
+apply_snmp() {
+    load_sys
+    for d in /usr/sbin /etc/switchui-snmp; do [ -x $d/snmpd ] && SNMPD=$d/snmpd && break; done
+    start-stop-daemon -K -q -p /var/run/sui-snmpd.pid 2>/dev/null; rm -f /var/run/sui-snmpd.pid
+    [ "$SNMP" = 1 ] && [ -n "$SNMPD" ] || return 0
+    mkdir -p $SUI_RUN/snmp
+    cat > $SUI_RUN/snmp/snmpd.conf <<EOC
+agentAddress udp:161
+rocommunity $SNMP_COMMUNITY $SNMP_ALLOW
+sysName $(hostname)
+sysDescr Meraki MS220-24P - firmware local $(cat /etc/switchui/VERSION 2>/dev/null) - noyau $(uname -r)
+sysLocation ${SNMP_LOCATION:-inconnu}
+sysContact ${SNMP_CONTACT:-inconnu}
+sysServices 2
+pass_persist -p 1 .1.3.6.1.2.1.2 /etc/switchui/sbin/sui-snmp
+pass_persist -p 1 .1.3.6.1.2.1.31 /etc/switchui/sbin/sui-snmp
+pass_persist -p 1 .1.3.6.1.2.1.105 /etc/switchui/sbin/sui-snmp
+EOC
+    LD_LIBRARY_PATH=/etc/switchui-snmp/lib $SNMPD -C -c $SUI_RUN/snmp/snmpd.conf -p /var/run/sui-snmpd.pid -Lf /dev/null
 }
 
 # tableau JSON d'une chaîne (échappement minimal)

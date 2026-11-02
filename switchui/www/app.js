@@ -6,7 +6,7 @@ let ST = null, CFG = null, H10 = [], H60 = [], N = 24, POE = false, macs = [], c
 
 // ---------- utilitaires ----------
 function toast(msg, bad) {
-  const t = $('#toast'); t.textContent = msg; t.className = 'on' + (bad ? ' err' : '');
+  const t = $('#toast'); t.textContent = window.t ? window.t(msg) : msg; t.className = 'on' + (bad ? ' err' : '');
   clearTimeout(t._h); t._h = setTimeout(() => t.className = '', 2600);
 }
 async function get(a, extra = '') {
@@ -79,7 +79,7 @@ function chart(cv, series, fmt, opts = {}) {
   g.clearRect(0, 0, W, h);
   const L = 70, R = 12, T = 10, B = 24;
   const pts = series.flatMap(s => s.data);
-  if (pts.length < 2) { g.fillStyle = mut; g.font = '13px system-ui'; g.fillText('Données en cours de collecte…', L, h / 2); return; }
+  if (pts.length < 2) { g.fillStyle = mut; g.font = '13px system-ui'; g.fillText(t('Données en cours de collecte…'), L, h / 2); return; }
   const t0 = Math.min(...pts.map(p => p[0])), t1 = Math.max(...pts.map(p => p[0]));
   let vmax = Math.max(opts.min || 0, ...pts.map(p => p[1])) * 1.1 || 1;
   const X = t => L + (t - t0) / Math.max(1, t1 - t0) * (W - L - R), Y = v => T + (1 - v / vmax) * (h - T - B);
@@ -101,7 +101,7 @@ function chart(cv, series, fmt, opts = {}) {
     if (s.fill) { g.lineTo(X(s.data.at(-1)[0]), Y(0)); g.lineTo(X(s.data[0][0]), Y(0)); g.closePath(); g.fillStyle = s.color + '22'; g.fill(); }
   });
   let lx = L + 6;
-  series.forEach(s => { g.fillStyle = s.color; g.fillRect(lx, T + 2, 10, 3); g.fillStyle = mut; g.fillText(s.label, lx + 14, T + 7); lx += g.measureText(s.label).width + 34; });
+  series.forEach(s => { g.fillStyle = s.color; g.fillRect(lx, T + 2, 10, 3); g.fillStyle = mut; g.fillText(t(s.label), lx + 14, T + 7); lx += g.measureText(t(s.label)).width + 34; });
 }
 
 // ---------- rendu ----------
@@ -283,6 +283,7 @@ function renderSystem() {
     ['Ventilateur', s.fan_pct != null ? s.fan_pct + ' %' : '–']
   ].map(([k, v]) => `<tr><td>${k}</td><td>${esc(v)}</td></tr>`).join('');
   renderVersions();
+  $('#sn-state').textContent = s.snmp_running ? 'agent actif' : 'agent arrêté';
 }
 function fillSystemForm() {
   const c = CFG.system;
@@ -291,9 +292,20 @@ function fillSystemForm() {
   $('#s-gw').value = c.IP_GW || ST.system.gw; $('#s-dns').value = c.IP_DNS || ST.system.dns; $('#s-vlan').value = c.MGMT_VLAN || 1;
   const sp = $('#s-stp'); sp.innerHTML = Array.from({ length: 16 }, (_, i) => `<option value="${i * 4096}">${i * 4096}${i * 4096 === 32768 ? ' (défaut)' : ''}</option>`).join('');
   sp.value = c.STP_PRIO || 61440; $('#s-lldp').checked = c.LLDP === '1'; $('#s-igmp').checked = c.IGMP === '1';
+  $('#sn-on').checked = c.SNMP === '1'; $('#sn-com').value = c.SNMP_COMMUNITY || 'public'; $('#sn-allow').value = c.SNMP_ALLOW || 'default';
+  $('#sn-loc').value = c.SNMP_LOCATION || ''; $('#sn-contact').value = c.SNMP_CONTACT || '';
   $('#mi-dest').value = c.MIRROR_DEST || 0; $('#mi-in').value = c.MIRROR_IN || ''; $('#mi-out').value = c.MIRROR_OUT || '';
   toggleStatic();
 }
+$('#sn-save').onclick = async () => {
+  const com = $('#sn-com').value.trim();
+  if ($('#sn-on').checked && !/^[A-Za-z0-9_.-]{1,32}$/.test(com)) return toast('Communauté : lettres, chiffres, _ . - (32 caractères maximum)', true);
+  try {
+    await post('set_system', { SNMP: $('#sn-on').checked ? 1 : 0, SNMP_COMMUNITY: com, SNMP_ALLOW: $('#sn-allow').value.trim() || 'default',
+      SNMP_LOCATION: $('#sn-loc').value, SNMP_CONTACT: $('#sn-contact').value });
+    toast('SNMP appliqué'); CFG = await get('config'); refresh();
+  } catch (e) { toast(e.message, true); }
+};
 function toggleStatic() { const st = $('#s-mode').value === 'static'; ['#s-ip', '#s-mask', '#s-gw', '#s-dns'].forEach(i => $(i).disabled = !st); }
 
 // ---------- configuration d'un port ----------
@@ -463,7 +475,7 @@ function drawCurve(cv, c, tNow) {
   for (let p = 0; p <= 100; p += 25) { g.beginPath(); g.moveTo(L, Y(p)); g.lineTo(W - R, Y(p)); g.stroke(); g.fillText(p + ' %', 4, Y(p) + 4); }
   for (let t = t0; t <= t1; t += 10) g.fillText(t + ' °C', X(t) - 12, h - 8);
   g.fillStyle = '#ef444422'; g.fillRect(X(75), T, X(t1) - X(75), h - T - B);
-  g.fillStyle = '#ef4444'; g.fillText('sécurité', X(75) + 3, T + 12);
+  g.fillStyle = '#ef4444'; g.fillText(t('sécurité'), X(75) + 3, T + 12);
   g.beginPath(); g.strokeStyle = '#1f6feb'; g.lineWidth = 2.5;
   for (let t = t0; t <= t1; t += 0.5) { const y = Y(fanPct(c, t)); t === t0 ? g.moveTo(X(t), y) : g.lineTo(X(t), y); }
   g.stroke();
@@ -603,6 +615,7 @@ async function refresh() {
     if ($('#dlg').open) renderDlgChart();
   } catch (e) { $('#h-dot').className = 'dot bad'; $('#h-ip').textContent = 'hors ligne'; }
 }
+$('#lang').value = LANG; $('#lang').onchange = e => setLang(e.target.value);
 (async () => {
   try { const t = localStorage.getItem('sui-tab'); if (t) $(`#tabs [data-tab="${t}"]`)?.click(); } catch (e) { }
   CFG = await get('config').catch(() => null);
