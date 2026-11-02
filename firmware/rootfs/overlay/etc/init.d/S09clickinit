@@ -1,0 +1,87 @@
+#!/bin/sh
+# Modifié pour Meraki-MS220-24P-Local : modèle Click lu dans le firmware Meraki en NAND
+#
+# Copyright (C) Hal Martin (github.com/halmartin)
+#
+# Mount click filesystem for managing the Vitesse ASIC
+#
+
+get_mac_addr() {
+    MAC=""
+    if [ -f /bin/board_data ]; then
+        MAC=$(/bin/board_data mac)
+    else
+        if [ -f /sys/devices/platform/i2c-gpio.1/i2c-1/1-0051/eeprom ]; then
+            MAC=$(dd if=/sys/devices/platform/i2c-gpio.1/i2c-1/1-0051/eeprom bs=6 skip=17 count=1 2>/dev/null | hexdump -C | head -1 | awk '{print $2,$3,$4,$5,$6,$7}' | tr ' ' ':')
+        fi
+    fi
+    if [ -z ${MAC} ] || [ $(echo "$MAC" | grep -Ec '([0-9a-f]{2}:){5}[0-9a-f]{2}') -ne 1 ]; then
+        # the MAC is empty or invalid
+        MAC=$(echo 88:15:44:$(echo $RANDOM | cut -c0-2):$(echo $RANDOM | cut -c0-2):$(echo $RANDOM | cut -c0-2))
+    fi
+    echo $MAC
+}
+
+start() {
+    if [ ! -f /etc/MERAKI_MAC ]; then
+        # generate it to /tmp/, just in case the overlay mount failed
+        # and /etc isn't writable
+        echo $(get_mac_addr) > /tmp/MERAKI_MAC
+        cp /tmp/MERAKI_MAC /etc/
+    else
+        cp /etc/MERAKI_MAC /tmp/
+    fi
+    echo "Using MAC address: $(cat /tmp/MERAKI_MAC)"
+    # extract the bottom three octets to use as IP
+    # Meraki's logic, not mine
+    cat /tmp/MERAKI_MAC | sed -n 's/.*:.*:.*:\([0-9A-Za-z:]*\):\([0-9A-Za-z:]*\):\([0-9A-Za-z:]*\).*/printf 6.%d.%d.%d\\\\n 0x\1 0x\2 0x\3/p' | xargs -0 sh -c > /tmp/MERAKI_IP
+    cat /tmp/MERAKI_MAC | sed -n 's/\([0-9A-Za-z]*\):\([0-9A-Za-z]*\):\([0-9A-Za-z]*\):\([0-9A-Za-z]*\):\([0-9A-Za-z]*\):\([0-9A-Za-z]*\).*/printf fd0a:9b09:1f7:0:%02x%02x:%xff:fe%02x:%02x%02x $((0x\1^0x2)) 0x\2 0x\3 0x\4 0x\5 0x\6/p' | xargs -0 sh -c > /tmp/MERAKI_IP6
+    # set the hostname based on the MAC address
+    # Meraki does this in S10boot
+    sysctl -qw kernel.hostname=$(echo m$(cat /tmp/MERAKI_MAC) | sed -e 's/://g')
+    if fgrep -q click /proc/filesystems; then
+        mount -t click none /click
+        # restore the default click configuration
+        # modèle extrait du firmware Meraki en NAND par S08kmods (même version que
+        # les modules), sinon celui fourni par meraki-builder
+        TEMPLATE=/etc/switch.template.gz
+        [ -f /tmp/switch.template.gz ] && TEMPLATE=/tmp/switch.template.gz
+        if [ -f $TEMPLATE ]; then
+            if [ -f /tmp/NUM_PORTS ]; then
+                NUM_PORTS=$(cat /tmp/NUM_PORTS)
+            else
+                # default to MS220-8P
+                NUM_PORTS=10
+            fi
+	    # not sure about PORT_POE_MW for non-POE models :shrug:
+	    # replace MTUN_IP with a link-local address to defang (not that we run mtunnel)
+	    gzip -dc $TEMPLATE | sed  -e 's/__MTUN_IP__/169.254.0.1/g' -e "s/__MY_MAC_ADDRESS__/$(cat /tmp/MERAKI_MAC)/g" -e "s/__NUM_SWITCHPORTS__/$NUM_PORTS/g" -e 's/__PORT_POE_MW__/30000/g'  > /click/config
+        fi
+    fi
+}
+
+stop() {
+    /bin/true
+}
+
+restart() {
+    stop
+    start
+}
+
+case "$1" in
+  start)
+      start
+    ;;
+  stop)
+      stop
+    ;;
+  restart|reload)
+      restart
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+esac
+
+exit $?

@@ -1,0 +1,43 @@
+#!/bin/sh
+# Régulation du ventilateur selon la température.
+# Température retenue : la plus haute entre le capteur TMP411 (carte et puce
+# de commutation) et le contrôleur PoE. Réglages dans /etc/switchui/system.conf :
+#   FAN_MODE  auto | manual      FAN_MANUAL  vitesse fixe en % (mode manuel)
+#   FAN_MIN   vitesse minimale % FAN_T_LOW   température (°C) du début de la montée
+#   FAN_T_HIGH température (°C) à laquelle le ventilateur atteint FAN_MAX
+#   FAN_MAX   vitesse maximale % atteinte à FAN_T_HIGH
+# Sécurité : 100 % au-delà de 75 °C ou si aucun capteur ne répond.
+. /etc/switchui/lib/sui.sh
+RUN=/tmp/sui; mkdir -p $RUN
+FAN=$(for h in /sys/class/hwmon/hwmon*; do [ "$(cat $h/name 2>/dev/null)" = vcoreiiipwmfan ] && echo $h; done | head -1)
+TMP=$(for h in /sys/class/hwmon/hwmon*; do [ "$(cat $h/name 2>/dev/null)" = tmp411 ] && echo $h; done | head -1)
+[ -n "$FAN" ] || { echo "sui-fan : pas de ventilateur pilotable"; exit 0; }
+last=""
+# SIGUSR1 (envoyé par l'interface) : réveil immédiat pour appliquer une nouvelle consigne
+trap 'kill $sp 2>/dev/null' USR1
+while true; do
+    load_sys
+    t1=$(cat $TMP/temp1_input 2>/dev/null); t2=$(cat $TMP/temp2_input 2>/dev/null)
+    tp=$(awk '{printf "%d", $1 * 1000}' $RUN/temp.txt 2>/dev/null)
+    pct=$(awk -v a="$t1" -v b="$t2" -v c="$tp" -v mode="$FAN_MODE" -v man="$FAN_MANUAL" \
+              -v mn="$FAN_MIN" -v mx="${FAN_MAX:-100}" -v lo="$FAN_T_LOW" -v hi="$FAN_T_HIGH" 'BEGIN {
+        t = -1000; n = 0
+        if (a != "") { t = (a > t ? a : t); n++ }
+        if (b != "") { t = (b > t ? b : t); n++ }
+        if (c != "" && c > 0) { t = (c > t ? c : t); n++ }
+        t /= 1000
+        if (n == 0 || t >= 75) { print 100; exit }
+        if (mode == "manual") { p = man + 0 }
+        else if (t <= lo) p = mn
+        else if (t >= hi) p = mx
+        else p = mn + (mx - mn) * (t - lo) / (hi - lo)
+        if (p < mn && mode != "manual") p = mn
+        if (p < 30) p = 30          # en dessous de 30 % le ventilateur cale
+        if (p > 100) p = 100
+        printf "%d", p }')
+    duty=$((pct * 255 / 100))
+    [ "$duty" != "$last" ] && echo $duty > $FAN/duty && last=$duty
+    echo "$pct ${t1:-0} ${t2:-0} ${tp:-0}" > $RUN/fan
+    sleep 15 & sp=$!
+    wait $sp
+done

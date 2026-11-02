@@ -1,0 +1,210 @@
+#!/bin/sh
+# API JSON de switchui (CGI pour busybox httpd)
+. /etc/switchui/lib/sui.sh
+sui_init_conf
+
+# décodage d'une chaîne application/x-www-form-urlencoded
+urldec() { printf '%s' "$1" | awk '
+    BEGIN { for (i = 0; i < 256; i++) h[sprintf("%02X", i)] = sprintf("%c", i) }
+    { s = $0; gsub(/\+/, " ", s); o = ""
+      while (match(s, /%[0-9A-Fa-f][0-9A-Fa-f]/)) {
+          o = o substr(s, 1, RSTART - 1) h[toupper(substr(s, RSTART + 1, 2))]
+          s = substr(s, RSTART + 3) }
+      printf "%s", o s }'; }
+
+# lit un paramètre dans la chaîne $PARAMS
+param() { v=$(printf '%s' "$PARAMS" | tr '&' '\n' | awk -F= -v k="$1" '$1==k {sub(/^[^=]*=/, ""); print; exit}'); urldec "$v"; }
+
+# ne garde que des caractères sûrs
+clean() { printf '%s' "$1" | tr -cd 'A-Za-z0-9 _.,:/@()+-' | cut -c1-${2:-40}; }
+num() { printf '%s' "$1" | tr -cd '0-9' | cut -c1-6; }
+b01() { [ "$1" = 1 ] && echo 1 || echo 0; }
+
+reply() { printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n'; }
+ok() { reply; echo "{\"ok\":true${1:+,$1}}"; exit 0; }
+err() { reply; echo "{\"ok\":false,\"error\":\"$(json_str "$1")\"}"; exit 0; }
+
+if [ "$REQUEST_METHOD" = POST ]; then
+    PARAMS=$(head -c "${CONTENT_LENGTH:-0}")
+    # protection contre les requêtes envoyées depuis un autre site
+    case "$HTTP_REFERER" in
+        ""|http://$HTTP_HOST/*|https://$HTTP_HOST/*) ;;
+        *) err "origine refusée" ;;
+    esac
+else
+    PARAMS=$QUERY_STRING
+fi
+A=$(param a)
+
+status_json() {
+    load_sys
+    poe=0; has_poe && poe=1
+    [ -f $SUI_RUN/poe.txt ] || pd690xx -l > $SUI_RUN/poe.txt 2>/dev/null
+    awk -v poe=$poe -v host="$(json_str "$(hostname)")" \
+        -v model="$(json_str "$(grep MODEL /etc/boardinfo | cut -d= -f2)")" \
+        -v mac="$(cat /tmp/MERAKI_MAC)" \
+        -v up="$(cut -d' ' -f1 /proc/uptime)" -v load="$(cut -d' ' -f1-3 /proc/loadavg)" \
+        -v mem="$(awk '/MemTotal/{t=$2}/MemAvailable/{a=$2}END{print t" "a}' /proc/meminfo)" \
+        -v temp="$(pd690xx -t 2>/dev/null | head -1 | cut -d' ' -f1)" \
+        -v volt="$(pd690xx -s 2>/dev/null | head -1 | cut -d' ' -f1)" \
+        -v kern="$(uname -r)" -v uiver="$(cat /etc/switchui/VERSION 2>/dev/null)" -v prev="$([ -d /etc/switchui.prev ] && echo 1 || echo 0)" -v ipinfo="$(tr '\n' ';' < $C/uplinkstate/dhcpc_state_for_brain)" \
+        -v ipmode="$IP_MODE" -v fan="$(cat $SUI_RUN/fan 2>/dev/null)" '
+    function js(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); return "\"" s "\"" }
+    FILENAME ~ /ports.conf/ { split($0, f, "|"); P[f[1]] = $0; next }
+    FILENAME ~ /dump_pports$/ && FNR > 1 { up_[$1]=$2; mbps[$1]=$3; fdx[$1]=$4; next }
+    FILENAME ~ /port_status/ && FNR > 1 { link[$1]=$2; lmode[$1]=$3; next }
+    FILENAME ~ /counters_meraki/ && FNR > 1 { rxb[$1]=$2; rxp[$1]=$3; rxbc[$1]=$4; rxmc[$1]=$5; txb[$1]=$7; txp[$1]=$8; next }
+    FILENAME ~ /stp_state/ && FNR > 1 { stp[$1]=$2; next }
+    FILENAME ~ /port_conf$/ && FNR > 1 { media[$1]=$3; next }
+    FILENAME ~ /poe.txt/ && FNR > 1 && $1 ~ /^[0-9]+$/ { pst[$1]=$2; ptype[$1]=$3; ppri[$1]=$4; pw[$1]=$5; ptot+=$5; next }
+    FILENAME ~ /mactable/ && FNR > 1 && $3 ~ /^[0-9]+$/ { nmac[$3]++; next }
+    FILENAME ~ /eeproms$/ && FNR > 1 && NF > 1 { i = $1; $1 = ""; sub(/^ +/, ""); SFP[i] = $0; next }
+    END {
+        split(mem, m, " "); split(ipinfo, ii, ";")
+        for (k in ii) { split(ii[k], kv, "="); IP[kv[1]] = kv[2] }
+        printf "{\"ok\":true,\"system\":{\"hostname\":%s,\"model\":%s,\"mac\":%s,\"kernel\":%s,", js(host), js(model), js(mac), js(kern)
+        printf "\"ui_version\":%s,\"has_prev\":%d,", js(uiver), prev
+        split(fan, F, " "); printf "\"fan_pct\":%s,\"temp_board\":%s,\"temp_asic\":%s,", (fan==""?"null":F[1]), (fan==""?"null":F[2]/1000), (fan==""?"null":F[3]/1000)
+        printf "\"uptime\":%d,\"load\":%s,\"mem_total\":%d,\"mem_avail\":%d,", up, js(load), m[1], m[2]
+        printf "\"poe\":%d,\"poe_temp\":%s,\"poe_volt\":%s,\"poe_total\":%.1f,", poe, (temp==""?"null":temp), (volt==""?"null":volt), ptot
+        printf "\"ip\":%s,\"mask\":%s,\"gw\":%s,\"dns\":%s,\"vlan\":%s,\"ip_mode\":%s},", js(IP["ip"]), js(IP["subnet"]), js(IP["router"]), js(IP["dns"]), js(IP["vid"]), js(ipmode)
+        printf "\"ports\":["
+        n = 0; for (p in P) if (p+0 > n) n = p+0
+        for (p = 1; p <= n; p++) {
+            split(P[p], f, "|")
+            printf "%s{\"port\":%d,\"name\":%s,\"enabled\":%d,\"mode\":%s,\"speed\":%s,\"vlan_mode\":%s,\"pvid\":%d,\"vlans\":%s,", (p>1?",":""), p, js(f[2]), f[3], js(f[4]), js(f[5]), js(f[6]), f[7], js(f[8])
+            printf "\"poe_on\":%d,\"stp\":%d,\"edge\":%s,\"isolated\":%d,\"storm\":%d,", f[9], f[10], js(f[11]), f[12], f[13]
+            printf "\"link\":%d,\"link_mode\":%s,\"mbps\":%d,\"fdx\":%d,\"media\":%s,\"stp_state\":%s,", link[p]+0, js(lmode[p]), mbps[p]+0, fdx[p]+0, js(media[p]), js(stp[p])
+            printf "\"rx_bytes\":%.0f,\"tx_bytes\":%.0f,\"rx_pkts\":%.0f,\"tx_pkts\":%.0f,\"rx_bcast\":%.0f,\"rx_mcast\":%.0f,\"macs\":%d", rxb[p], txb[p], rxp[p], txp[p], rxbc[p], rxmc[p], nmac[p]
+            printf ",\"sfp\":%s", (p in SFP ? js(SFP[p]) : "null")
+            if (poe) printf ",\"poe_status\":%s,\"poe_type\":%s,\"poe_prio\":%s,\"poe_w\":%.1f", js(pst[p]), js(ptype[p]), js(ppri[p]), pw[p]
+            printf "}"
+        }
+        printf "]}\n"
+    }' $PORTS_CONF $C/switch_port_table/dump_pports $C/sw0_ctrl/port_status $C/sw0_ctrl/port_counters_meraki \
+       $C/sw0_ctrl/port_stp_state $C/sw0_ctrl/port_conf $SUI_RUN/poe.txt $C/sw0_ctrl/mactable $C/sfp_mgr/eeproms
+}
+
+case "$A" in
+status)
+    reply; status_json ;;
+hist)
+    r=$(param r); [ "$r" = 60 ] || r=10
+    printf 'Content-Type: text/plain\r\nCache-Control: no-store\r\n\r\n'
+    cat $SUI_RUN/h$r 2>/dev/null ;;
+mac)
+    reply
+    awk 'NR>1 && NF>=4 { printf "%s{\"vlan\":%d,\"mac\":\"%s\",\"port\":\"%s\",\"static\":%s}", (n++?",":"["), $1, $2, ($3 ~ /^[0-9]+$/ ? $3 : "CPU"), ($3 ~ /^[0-9]+$/ ? $4 : $3) } END { if (!n) printf "["; print "]" }' $C/sw0_ctrl/mactable | sed 's/^/{"ok":true,"macs":/; s/$/}/' ;;
+clients)
+    # appareils vus derrière chaque port (table des clients du moteur Meraki :
+    # observation passive du trafic) + nom mDNS éventuel
+    reply
+    awk 'FILENAME ~ /dump$/ { for (i = 2; i <= NF; i++) if ($i ~ /\.local$/) { n = $i; sub(/\.local$/, "", n); NAME[$1] = n; break } next }
+         FNR > 1 && $3 ~ /^[0-9]+$/ {
+             gsub(/["\\]/, "", NAME[$6])
+             printf "%s{\"port\":%d,\"mac\":\"%s\",\"ip\":\"%s\",\"name\":\"%s\",\"ago\":%.0f}", (n++ ? "," : "[") , $3, $6, ($7 == "0.0.0.0" ? "" : $7), NAME[$6], $9 }
+         END { if (!n) printf "["; print "]" }' $C/client_ip_table/dump $C/client_ip_table/list | sed 's/^/{"ok":true,"clients":/; s/$/}/' ;;
+config)
+    reply; load_sys
+    printf '{"ok":true,"system":{'
+    sed -n "s/^\([A-Z_]*\)='\(.*\)'$/\"\1\":\"\2\"/p" $SYS_CONF | tr '\n' ',' | sed 's/,$//'
+    printf '},"vlans":['
+    awk -F'|' '{printf "%s{\"id\":%d,\"name\":\"%s\"}", (NR>1?",":""), $1, $2}' $VLANS_CONF
+    printf ']}\n' ;;
+veriphy_status)
+    reply; printf '{"ok":true,"result":'; cat $C/sw0_ctrl/veriphy_status_json | tr -d '\n'; echo '}' ;;
+log)
+    reply; printf '{"ok":true,"log":"'
+    { dmesg | tail -n 150; echo "--- actions switchui ---"; tail -n 50 $SUI_RUN/actions.log 2>/dev/null; } | json_str "$(cat)" | sed ':a;N;$!ba;s/\n/\\n/g' | tr -d '\r\t'
+    echo '"}' ;;
+set_port)
+    [ "$REQUEST_METHOD" = POST ] || err "POST requis"
+    p=$(num "$(param port)"); [ -n "$p" ] && [ "$p" -ge 1 ] && [ "$p" -le "$(num_ports)" ] || err "port invalide"
+    name=$(clean "$(param name)" 32 | tr -d '|')
+    mode=$(param mode); [ "$mode" = forced ] || mode=aneg
+    speed=$(param speed); case "$speed" in 10hdx|10fdx|100hdx|100fdx|1Gfdx) ;; *) speed=""; [ "$mode" = forced ] && err "vitesse invalide";; esac
+    vmode=$(param vlan_mode); [ "$vmode" = access ] || vmode=trunk
+    pvid=$(num "$(param pvid)"); [ -n "$pvid" ] && [ "$pvid" -ge 1 ] && [ "$pvid" -le 4094 ] || err "VLAN natif invalide"
+    vlans=$(param vlans | tr -cd '0-9,-')
+    edge=$(param edge); case "$edge" in auto|yes|no) ;; *) edge=auto;; esac
+    new="$p|$name|$(b01 "$(param enabled)")|$mode|$speed|$vmode|$pvid|$vlans|$(b01 "$(param poe)")|$(b01 "$(param stp)")|$edge|$(b01 "$(param isolated)")|$(b01 "$(param storm)")"
+    awk -F'|' -v p="$p" -v l="$new" '$1==p {print l; next} {print}' $PORTS_CONF > $PORTS_CONF.tmp && mv $PORTS_CONF.tmp $PORTS_CONF
+    sui_log "port $p : $new"
+    apply_port $p || err "application impossible"
+    ok ;;
+set_system)
+    [ "$REQUEST_METHOD" = POST ] || err "POST requis"
+    load_sys
+    for k in HOSTNAME IP_MODE IP_ADDR IP_MASK IP_GW IP_DNS MGMT_VLAN STP_PRIO LLDP IGMP MIRROR_DEST MIRROR_IN MIRROR_OUT FAN_MODE FAN_MANUAL FAN_MIN FAN_MAX FAN_T_LOW FAN_T_HIGH; do
+        v=$(param $k)
+        # paramètre absent : garde la valeur actuelle
+        printf '%s' "$PARAMS" | tr '&' '\n' | grep -q "^$k=" || v=$(eval echo "\$$k")
+        case $k in
+            HOSTNAME) v=$(printf '%s' "$v" | tr -cd 'A-Za-z0-9-' | cut -c1-30); [ -z "$v" ] && v=$(hostname) ;;
+            IP_MODE) [ "$v" = static ] || v=dhcp ;;
+            IP_ADDR|IP_MASK|IP_GW|IP_DNS) v=$(printf '%s' "$v" | tr -cd '0-9.') ;;
+            MGMT_VLAN|STP_PRIO|MIRROR_DEST) v=$(num "$v") ;;
+            LLDP|IGMP) v=$(b01 "$v") ;;
+            MIRROR_IN|MIRROR_OUT) v=$(printf '%s' "$v" | tr -cd '0-9,-') ;;
+            FAN_MODE) [ "$v" = manual ] || v=auto ;;
+            FAN_MANUAL|FAN_MIN|FAN_MAX) v=$(num "$v"); [ -z "$v" ] && v=30; [ "$v" -lt 30 ] && v=30; [ "$v" -gt 100 ] && v=100 ;;
+            FAN_T_LOW|FAN_T_HIGH) v=$(num "$v"); [ -z "$v" ] && v=50; [ "$v" -gt 74 ] && v=74 ;;
+        esac
+        echo "$k='$v'"
+    done > $SYS_CONF.tmp && mv $SYS_CONF.tmp $SYS_CONF
+    sui_log "système : $(tr '\n' ' ' < $SYS_CONF)"
+    # réveille le régulateur du ventilateur pour appliquer la consigne tout de suite
+    kill -USR1 $(cat /var/run/sui-fan.pid 2>/dev/null) 2>/dev/null
+    apply_system
+    ok ;;
+set_vlans)
+    [ "$REQUEST_METHOD" = POST ] || err "POST requis"
+    param list | tr ';' '\n' | awk -F: '$1 ~ /^[0-9]+$/ && $1>=1 && $1<=4094 { n=$2; gsub(/[^A-Za-z0-9 _.-]/, "", n); print $1 "|" substr(n,1,32) }' | sort -n -u -t'|' -k1,1 > $VLANS_CONF.tmp
+    grep -q '^1|' $VLANS_CONF.tmp || sed -i '1i 1|default' $VLANS_CONF.tmp
+    mv $VLANS_CONF.tmp $VLANS_CONF
+    sui_log "VLAN : $(tr '\n' ' ' < $VLANS_CONF)"
+    ok ;;
+poe_reset)
+    [ "$REQUEST_METHOD" = POST ] || err "POST requis"
+    p=$(num "$(param port)"); [ -n "$p" ] || err "port invalide"
+    pd690xx -r $p >/dev/null 2>&1; sui_log "PoE redémarré sur le port $p"; ok ;;
+veriphy)
+    [ "$REQUEST_METHOD" = POST ] || err "POST requis"
+    p=$(num "$(param port)"); [ -n "$p" ] || err "port invalide"
+    click_write sw0_ctrl/veriphy_start "$p" || err "test impossible"
+    sui_log "test de câble sur le port $p"; ok ;;
+reset_counters)
+    [ "$REQUEST_METHOD" = POST ] || err "POST requis"
+    click_write sw0_ctrl/reset_counters "" ; sui_log "compteurs remis à zéro"; ok ;;
+flush_mac)
+    [ "$REQUEST_METHOD" = POST ] || err "POST requis"
+    click_write sw0_ctrl/mactable_flush "" ; sui_log "table MAC vidée"; ok ;;
+set_password)
+    [ "$REQUEST_METHOD" = POST ] || err "POST requis"
+    u=$(param user | tr -cd 'A-Za-z0-9_-' | cut -c1-20); pw=$(param password)
+    [ -n "$u" ] && [ ${#pw} -ge 6 ] || err "identifiant ou mot de passe trop court (6 caractères minimum)"
+    h=$(/etc/switchui/bin/httpd -m "$pw")
+    echo "/:$u:$h" > $SUI_ETC/httpd.conf; chmod 600 $SUI_ETC/httpd.conf
+    sui_log "identifiants d'administration modifiés ($u)"; ok ;;
+backup)
+    printf 'Content-Type: text/plain\r\nContent-Disposition: attachment; filename="switchui-%s.conf"\r\n\r\n' "$(hostname)"
+    for f in system.conf vlans.conf ports.conf; do echo "### $f"; cat $SUI_ETC/$f; done ;;
+restore)
+    [ "$REQUEST_METHOD" = POST ] || err "POST requis"
+    data=$(param data)
+    printf '%s\n' "$data" | grep -q '^### ports.conf' || err "fichier de sauvegarde invalide"
+    for f in system.conf vlans.conf ports.conf; do
+        printf '%s\n' "$data" | awk -v f="### $f" '/^### /{on=($0==f); next} on' > $SUI_ETC/$f.tmp
+    done
+    grep -qvE "^[A-Z_]+='[^']*'$" $SUI_ETC/system.conf.tmp && err "system.conf invalide"
+    for f in system.conf vlans.conf ports.conf; do mv $SUI_ETC/$f.tmp $SUI_ETC/$f; done
+    sui_log "configuration restaurée"
+    apply_system; apply_all_ports; ok ;;
+reboot)
+    [ "$REQUEST_METHOD" = POST ] || err "POST requis"
+    sui_log "redémarrage demandé"; sync
+    ( sleep 2; reboot -f ) >/dev/null 2>&1 &
+    ok ;;
+*)
+    err "action inconnue" ;;
+esac

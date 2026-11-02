@@ -1,0 +1,34 @@
+#!/bin/sh
+# Bouton reset en façade (GPIO 4, à 0 quand il est enfoncé).
+# Maintenu 10 secondes : retour à la configuration d'usine
+#   - adresse IP en DHCP sur le VLAN 1
+#   - identifiant web admin / numéro de série du switch
+#   - réglages des ports, VLAN et système effacés
+# puis redémarrage. Les modules Meraki et l'interface restent installés.
+GPIO=4
+HOLD=10
+G=/sys/class/gpio/gpio$GPIO
+[ -d $G ] || echo $GPIO > /sys/class/gpio/export 2>/dev/null
+[ -f $G/value ] || { echo "sui-button : GPIO $GPIO indisponible"; exit 0; }
+echo in > $G/direction 2>/dev/null
+n=0
+while true; do
+    if [ "$(cat $G/value)" = 0 ]; then
+        n=$((n + 1))
+        if [ $n -ge $((HOLD * 5)) ]; then
+            logger -t switchui "bouton reset maintenu ${HOLD}s : retour à la configuration d'usine"
+            echo "$(date '+%F %T') bouton reset : configuration d'usine" >> /tmp/sui/actions.log
+            echo 1 > /click/sw0_ctrl/power_led_orange 2>/dev/null
+            echo 0 > /click/sw0_ctrl/power_led_green 2>/dev/null
+            rm -f /etc/switchui/ports.conf /etc/switchui/vlans.conf /etc/switchui/system.conf \
+                  /etc/switchui/httpd.conf /etc/default/switch_dhcp /etc/default/switch_vlans /etc/default/switch_ports
+            sync
+            # attend que le bouton soit relâché pour ne pas boucler au redémarrage
+            while [ "$(cat $G/value)" = 0 ]; do sleep 1; done
+            reboot -f
+        fi
+    else
+        n=0
+    fi
+    usleep 200000
+done

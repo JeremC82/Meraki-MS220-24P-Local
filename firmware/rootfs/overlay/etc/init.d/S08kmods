@@ -1,0 +1,101 @@
+#!/bin/sh
+#
+# Copyright (C) Hal Martin (github.com/halmartin) — GPL v3
+# Modifié pour Meraki-MS220-24P-Local :
+#   - modules et modèle Click extraits du firmware Meraki présent en NAND
+#     (part1 puis part2), en une seule lecture
+#   - assoc_stub chargé avant elts_meraki (firmware Meraki 3.18.131)
+#   - sécurité : si un chargement précédent a figé le démarrage, il est sauté
+#
+# Charge les modules du pilote de la puce de commutation Vitesse.
+
+PENDING=/etc/kmods_pending
+FW=/tmp/fw
+
+determine_board() {
+    if [ -f /etc/boardinfo ]; then
+        model=$(grep MODEL /etc/boardinfo | grep -Eo "MS[234]2(0-[248]([48])?)?(P)?")
+    else
+        model=$(board_data model)
+        [ -n "$model" ] && echo MODEL=${model} > /etc/boardinfo
+    fi
+    [ -z "$model" ] && model=$(grep 'system type' /proc/cpuinfo | grep -Eo 'VSC74[23][457]( Dual)?')
+    case "$model" in
+        MS220-8|MS220-8P|VSC7425)     mod_dir=luton26;     switch_board=MERAKI_BOARD_MS220_8;  echo 10 > /tmp/NUM_PORTS ;;
+        MS220-24|MS220-24P|VSC7427)   mod_dir=luton26;     switch_board=MERAKI_BOARD_MS220_24; echo 24 > /tmp/NUM_PORTS ;;
+        MS220-48|MS220-48P)           mod_dir=jaguar_dual; switch_board=MERAKI_BOARD_MS220_48; echo 52 > /tmp/NUM_PORTS ;;
+        MS320-24|MS320-24P|VSC7434)   mod_dir=jaguar;      switch_board=MERAKI_BOARD_MS320_24; echo 28 > /tmp/NUM_PORTS ;;
+        MS320-48|MS320-48P|"VSC7434 Dual") mod_dir=jaguar_dual; switch_board=MERAKI_BOARD_MS320_48; echo 52 > /tmp/NUM_PORTS ;;
+        MS22|MS22P)                   mod_dir=luton26;     switch_board=MERAKI_BOARD_MS22;     echo 24 > /tmp/NUM_PORTS ;;
+        MS42|MS42P)                   mod_dir=jaguar_dual; switch_board=MERAKI_BOARD_MS42;     echo 52 > /tmp/NUM_PORTS ;;
+        *) echo "!!! modèle inconnu ($model) : écrire 'MODEL=MS220-24P' (par exemple) dans /etc/boardinfo puis redémarrer"; return 1 ;;
+    esac
+}
+
+load_modules() {
+    M=$1
+    insmod $M/${mod_dir}/vtss_core.ko board_desc=${switch_board} || { echo "Erreur au chargement de vtss_core" > /dev/kmsg; return 1; }
+    echo "Loaded '${mod_dir}/vtss_core.ko board_desc=${switch_board}'"
+    # elts_meraki attend deux fonctions du noyau Meraki fournies par assoc_stub
+    insmod /lib/modules/assoc_stub.ko
+    for mod in proclikefs merakiclick elts_meraki; do
+        insmod $M/${mod}.ko && echo "Loaded '${mod}.ko'" || { echo "Erreur au chargement de ${mod}.ko" > /dev/kmsg; return 1; }
+        sleep 1
+    done
+    insmod $M/${mod_dir}/vc_click.ko && echo "Loaded '${mod_dir}/vc_click.ko'" || { echo "Erreur au chargement de vc_click" > /dev/kmsg; return 1; }
+}
+
+# extrait modules et modèle Click de l'initrd du firmware Meraki d'une partition
+extract() {
+    n=$(awk -F: -v p="\"$1\"" '$0 ~ p {sub("mtd", "", $1); print $1}' /proc/mtd)
+    [ -n "$n" ] || return 1
+    off=$(find_hdr -g /dev/mtdblock$n)
+    [ -n "$off" ] && [ "$off" -ge 0 ] 2>/dev/null || return 1
+    rm -rf $FW; mkdir -p $FW; cd $FW
+    dd if=/dev/mtdblock$n bs=4096 skip=$((off / 4096)) 2>/dev/null | tail -c +$((off % 4096 + 1)) | gzip -dc 2>/dev/null \
+        | cpio -idu "lib/modules/*" "etc/switch.template" 2>/dev/null
+    cd /
+    [ -f $FW/lib/modules/${mod_dir}/vtss_core.ko ]
+}
+
+start() {
+    determine_board || return 1
+    if [ -f $PENDING ]; then
+        rm -f $PENDING; sync
+        echo "!!! Le chargement des modules a figé le démarrage précédent : il est sauté cette fois."
+        echo "!!! Pour réessayer : /etc/init.d/S08kmods start"
+        return 1
+    fi
+    kver=$(uname -r | cut -d- -f1)
+    for part in part1 part2; do
+        extract $part || continue
+        mver=$(strings $FW/lib/modules/${mod_dir}/vtss_core.ko | sed -n 's/^vermagic=\([^-]*\).*/\1/p')
+        if [ "$mver" != "$kver" ]; then
+            echo "$part contient des modules pour $mver, le noyau est $kver"
+            continue
+        fi
+        echo "Modules trouvés dans $part"
+        # modèle Click du même firmware que les modules
+        [ -f $FW/etc/switch.template ] && gzip -c $FW/etc/switch.template > /tmp/switch.template.gz
+        touch $PENDING; sync
+        load_modules $FW/lib/modules
+        rc=$?
+        rm -f $PENDING; sync
+        return $rc
+    done
+    echo "Aucun module pour le noyau $kver dans part1/part2"
+    return 1
+}
+
+stop() {
+    for mod in vc_click elts_meraki merakiclick proclikefs assoc_stub vtss_core; do
+        rmmod $mod 2>/dev/null
+    done
+}
+
+case "$1" in
+    start|force) start ;;
+    stop) stop ;;
+    restart) stop; start ;;
+    *) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac

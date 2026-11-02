@@ -1,0 +1,15 @@
+--- a/include/linux/skbuff.h	2026-11-02 13:46:34.310890115 +0100
++++ b/include/linux/skbuff.h	2026-11-02 13:46:34.286890225 +0100
+@@ -534,11 +534,8 @@
+ 	 * want to keep them across layers you have to do a skb_clone()
+ 	 * first. This is owned by whoever has the skb queued ATM.
+ 	 */
+-#ifdef __LP64__
++	/* noyau Meraki 3.18.131 : cb de 96 octets aussi en 32 bits (modules vc_click/merakiclick) */
+ 	char			cb[96] __aligned(8);
+-#else
+-	char			cb[80] __aligned(8);
+-#endif
+ 
+ 	unsigned long		_skb_refdst;
+ 	void			(*destructor)(struct sk_buff *skb);

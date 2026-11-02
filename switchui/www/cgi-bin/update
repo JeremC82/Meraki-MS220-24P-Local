@@ -1,0 +1,120 @@
+#!/bin/sh
+# Mise à jour du switch par paquet .msu (archive tar.gz)
+#
+# Contenu d'un paquet :
+#   manifest     NAME=, VERSION=, DESCRIPTION=, REBOOT=0|1
+#   sha256sums   empreinte de chaque fichier du paquet (sauf elle-même)
+#   etc/...      fichiers copiés dans /etc (zone persistante)
+#   kernel.part  (facultatif) image de la partition "kernel" (en-tête SPIM)
+#   install.sh   (facultatif) script lancé après la copie des fichiers
+. /etc/switchui/lib/sui.sh
+
+U=$SUI_RUN/update
+PKG=$SUI_RUN/update.msu
+
+reply() { printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n'; }
+fail() { reply; echo "{\"ok\":false,\"error\":\"$(json_str "$1")\"}"; rm -rf $U $PKG; exit 0; }
+
+[ "$REQUEST_METHOD" = POST ] || fail "POST requis"
+case "$HTTP_REFERER" in
+    ""|http://$HTTP_HOST/*|https://$HTTP_HOST/*) ;;
+    *) fail "origine refusée" ;;
+esac
+A=$(printf '%s' "$QUERY_STRING" | sed -n 's/.*a=\([a-z_]*\).*/\1/p')
+
+manifest_json() {
+    . $U/manifest
+    printf '"name":"%s","version":"%s","description":"%s","reboot":%d,"kernel":%s,"files":[' \
+        "$(json_str "$NAME")" "$(json_str "$VERSION")" "$(json_str "$DESCRIPTION")" "${REBOOT:-0}" \
+        "$([ -f $U/kernel.part ] && echo true || echo false)"
+    (cd $U && find etc -type f 2>/dev/null) | awk '{printf "%s\"%s\"", (NR>1?",":""), $0}'
+    printf '],"script":%s' "$([ -f $U/install.sh ] && echo true || echo false)"
+}
+
+case "$A" in
+upload)
+    # le corps de la requête est le paquet brut
+    [ "${CONTENT_LENGTH:-0}" -gt 0 ] && [ "$CONTENT_LENGTH" -le 16777216 ] || fail "taille de paquet invalide"
+    rm -rf $U $PKG; mkdir -p $U
+    head -c "$CONTENT_LENGTH" > $PKG
+    [ "$(( $(wc -c < $PKG) ))" = "$CONTENT_LENGTH" ] || fail "envoi incomplet"
+    gunzip -c $PKG > $U.tar 2>/dev/null || fail "ce fichier n'est pas un paquet .msu (gzip)"
+    # chemins autorisés uniquement
+    tar tf $U.tar > $U.list 2>/dev/null || fail "archive illisible"
+    if grep -vqE '^(\./)?(manifest|sha256sums|kernel\.part|install\.sh|etc/?|etc/[A-Za-z0-9_./-]+)$' $U.list || grep -q '\.\./' $U.list; then
+        rm -f $U.tar; fail "le paquet contient des chemins non autorisés"
+    fi
+    tar xf $U.tar -C $U || fail "extraction impossible"
+    rm -f $U.tar $U.list
+    [ -f $U/manifest ] && [ -f $U/sha256sums ] || fail "manifest ou sha256sums manquant"
+    grep -qvE '^[A-Z_]+="[^"$`\\]*"$|^$|^#' $U/manifest && fail "manifest invalide"
+    (cd $U && sha256sum -c sha256sums >/dev/null 2>&1) || fail "empreintes SHA-256 incorrectes : paquet corrompu"
+    # tous les fichiers doivent être couverts par sha256sums
+    for f in $(cd $U && find . -type f ! -name sha256sums | sed 's#^\./##'); do
+        grep -q "  $f\$" $U/sha256sums || fail "fichier non vérifié dans le paquet : $f"
+    done
+    if [ -f $U/kernel.part ]; then
+        sz=$(( $(wc -c < $U/kernel.part) ))
+        msz=$((0x$(awk '$4=="\"kernel\"" {print $2}' /proc/mtd)))
+        [ "$sz" -le "$msz" ] || fail "noyau trop grand pour la partition"
+        [ "$(head -c 4 $U/kernel.part)" = SPIM ] || fail "kernel.part n'a pas d'en-tête SPIM"
+    fi
+    sui_log "paquet de mise à jour reçu et vérifié ($(( $(wc -c < $PKG) )) octets)"
+    reply; printf '{"ok":true,'; manifest_json; echo '}' ;;
+apply)
+    [ -f $U/manifest ] || fail "aucun paquet vérifié en attente"
+    . $U/manifest
+    sui_log "installation de $NAME $VERSION"
+    # nouvelle interface préparée à côté (/etc/switchui.new), configuration comprise,
+    # puis basculée par renommage : une coupure de courant laisse soit l'ancienne
+    # version complète, soit la nouvelle, jamais un mélange des deux
+    if [ -d $U/etc/switchui ]; then
+        rm -rf /etc/switchui.new && cp -a /etc/switchui /etc/switchui.new || fail "copie impossible"
+        cp -a $U/etc/switchui/. /etc/switchui.new/ || fail "copie des fichiers impossible"
+        rm -rf $U/etc/switchui
+        sync
+        rm -rf /etc/switchui.prev
+        mv /etc/switchui /etc/switchui.prev && mv /etc/switchui.new /etc/switchui || fail "bascule impossible"
+        sync
+    fi
+    # autres fichiers de /etc (scripts de démarrage...)
+    if [ -d $U/etc ]; then
+        cp -a $U/etc/. /etc/ || fail "copie des fichiers impossible"
+    fi
+    reboot=${REBOOT:-0}
+    if [ -f $U/kernel.part ]; then
+        sui_log "écriture du noyau : NE PAS COUPER L'ALIMENTATION"
+        mtd=/dev/$(awk -F: '/"kernel"/ {print $1}' /proc/mtd)
+        flashcp $U/kernel.part $mtd || fail "écriture du noyau impossible"
+        sz=$(( $(wc -c < $U/kernel.part) ))
+        a=$(head -c $sz $mtd | md5sum | cut -d' ' -f1); b=$(md5sum < $U/kernel.part | cut -d' ' -f1)
+        [ "$a" = "$b" ] || fail "vérification du noyau écrit incorrecte"
+        sui_log "noyau écrit et vérifié ($sz octets)"
+        reboot=1
+    fi
+    if [ -f $U/install.sh ]; then
+        sh $U/install.sh >> $SUI_RUN/actions.log 2>&1 || sui_log "install.sh a renvoyé une erreur"
+    fi
+    echo "$VERSION" > /etc/switchui/VERSION
+    sync
+    sui_log "mise à jour $NAME $VERSION installée"
+    rm -rf $U $PKG
+    reply; echo "{\"ok\":true,\"reboot\":$reboot}"
+    if [ "$reboot" = 1 ]; then ( sleep 3; reboot -f ) >/dev/null 2>&1 &
+    else ( sleep 1; /etc/init.d/S95switchui restart ) >/dev/null 2>&1 &
+    fi ;;
+cancel)
+    rm -rf $U $PKG; reply; echo '{"ok":true}' ;;
+rollback)
+    [ -d /etc/switchui.prev ] || fail "aucune version précédente"
+    # garde la configuration actuelle (ports, VLAN, système, mot de passe)
+    for f in ports.conf vlans.conf system.conf httpd.conf; do
+        [ -f /etc/switchui/$f ] && cp -a /etc/switchui/$f /etc/switchui.prev/$f
+    done
+    rm -rf /etc/switchui.new && mv /etc/switchui /etc/switchui.new && mv /etc/switchui.prev /etc/switchui && rm -rf /etc/switchui.new
+    sync; sui_log "retour à la version précédente de l'interface"
+    reply; echo '{"ok":true}'
+    ( sleep 1; /etc/init.d/S95switchui restart ) >/dev/null 2>&1 & ;;
+*)
+    fail "action inconnue" ;;
+esac

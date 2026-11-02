@@ -1,0 +1,54 @@
+#!/bin/sh
+#
+# switchui : interface web d'administration (busybox httpd + CGI)
+#
+
+SUI=/etc/switchui
+start() {
+    [ -d /click/sw0_ctrl ] || { echo "switchui: Click n'est pas démarré"; return 1; }
+    # première installation : l'interface livrée dans l'image est copiée dans la
+    # zone persistante, où les mises à jour pourront la remplacer
+    if [ ! -f $SUI/www/index.html ] && [ -d /usr/share/switchui ]; then
+        mkdir -p $SUI && cp -a /usr/share/switchui/. $SUI/ && sync
+    fi
+    # Dropbear refuse les clés SSH si /root n'appartient pas à root
+    chown root:root /root 2>/dev/null; chmod 755 /root 2>/dev/null
+    . $SUI/lib/sui.sh
+    sui_init_conf
+    # identifiants par défaut : admin / numéro de série du switch
+    if [ ! -s $SUI/httpd.conf ]; then
+        echo "/:admin:$($SUI/bin/httpd -m "$(board_data serial)")" > $SUI/httpd.conf
+        chmod 600 $SUI/httpd.conf
+    fi
+    # DNS (celui du DHCP, sauf si une adresse fixe est configurée) et heure
+    load_sys
+    dhcp_dns=$(awk -F= '/^dns=/{print $2}' $C/uplinkstate/dhcpc_state_for_brain)
+    gw=$(awk -F= '/^router=/{print $2}' $C/uplinkstate/dhcpc_state_for_brain)
+    dns=${IP_DNS:-$dhcp_dns}; [ "$IP_MODE" = static ] && gw=${IP_GW:-$gw}
+    [ -n "$dns" ] && echo "nameserver $dns" > /etc/resolv.conf
+    echo "CET-1CEST,M3.5.0,M10.5.0/3" > /etc/TZ
+    { [ -n "$gw" ] && echo "server $gw iburst"; echo "pool pool.ntp.org iburst"; echo "makestep 1 -1"; } > /etc/chrony.conf
+    pidof chronyd >/dev/null || chronyd -f /etc/chrony.conf
+    chronyc waitsync 15 0 0 2 >/dev/null 2>&1
+    # réapplique la configuration enregistrée
+    apply_system
+    apply_all_ports
+    sui_log "configuration appliquée au démarrage"
+    start-stop-daemon -S -b -m -p /var/run/sui-collect.pid -x $SUI/sbin/sui-collect
+    start-stop-daemon -S -b -m -p /var/run/sui-fan.pid -x $SUI/sbin/sui-fan
+    start-stop-daemon -S -b -m -p /var/run/sui-button.pid -x $SUI/sbin/sui-button
+    $SUI/bin/httpd -p 80 -h $SUI/www -c $SUI/httpd.conf -r "Administration du switch"
+    echo "switchui: http://$(awk -F= '/^ip=/{print $2}' /click/uplinkstate/dhcpc_state_for_brain)/"
+}
+
+stop() {
+    for d in sui-collect sui-fan sui-button; do start-stop-daemon -K -q -p /var/run/$d.pid; done
+    killall httpd 2>/dev/null
+}
+
+case "$1" in
+    start) start ;;
+    stop) stop ;;
+    restart) stop; sleep 1; start ;;
+    *) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac

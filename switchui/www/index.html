@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Switch – Administration</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><span class="logo">◧</span> <span id="h-name">Switch</span> <small id="h-model"></small> <span class="ver" id="h-ver"></span></div>
+  <nav id="tabs">
+    <button data-tab="dash" class="on">Tableau de bord</button>
+    <button data-tab="ports">Ports</button>
+    <button data-tab="vlans">VLAN</button>
+    <button data-tab="poe">PoE</button>
+    <button data-tab="fan">Ventilation</button>
+    <button data-tab="graphs">Graphiques</button>
+    <button data-tab="mac">Table MAC</button>
+    <button data-tab="diag">Diagnostic</button>
+    <button data-tab="system">Système</button>
+  </nav>
+  <div class="hstat"><span id="h-dot" class="dot"></span><span id="h-ip"></span></div>
+</header>
+
+<main>
+<!-- Tableau de bord -->
+<section id="dash" class="tab on">
+  <div class="cards">
+    <div class="card kpi"><label>Ports actifs</label><b id="k-links">–</b><small id="k-links2"></small></div>
+    <div class="card kpi"><label>Débit entrant</label><b id="k-rx" class="in">–</b><small id="k-rx2">reçu par le switch</small></div>
+    <div class="card kpi"><label>Débit sortant</label><b id="k-tx" class="out">–</b><small id="k-tx2">envoyé par le switch</small></div>
+    <div class="card kpi"><label>PoE consommé</label><b id="k-poe">–</b><small id="k-poe2"></small></div>
+    <div class="card kpi"><label>Température PoE</label><b id="k-temp">–</b><small id="k-volt"></small></div>
+    <div class="card kpi"><label>Ventilateur</label><b id="k-fan">–</b><small id="k-fan2"></small></div>
+    <div class="card kpi"><label>Charge CPU</label><b id="k-load">–</b><small id="k-mem"></small></div>
+    <div class="card kpi"><label>En service depuis</label><b id="k-up">–</b><small id="k-kern"></small></div>
+  </div>
+  <div class="card">
+    <h3>Façade <small>cliquez sur un port pour le configurer</small></h3>
+    <div id="panel" class="panel"></div>
+    <div class="legend"><span class="sw up"></span>lien actif <span class="sw g1"></span>1 Gb/s <span class="sw f100"></span>100 Mb/s <span class="sw dis"></span>désactivé <span class="poe-ic">⚡</span>alimenté en PoE <span class="combo-ic">SFP</span>module SFP inséré (ports 21 à 24)</div>
+  </div>
+  <div class="card">
+    <h3>Débit du switch <small>toutes les 10 s, dernière heure</small></h3>
+    <canvas id="c-dash" height="220"></canvas>
+  </div>
+  <div class="card" id="dash-poe">
+    <h3>Puissance PoE <small>dernière heure · détail dans l'onglet PoE</small></h3>
+    <canvas id="c-dash-poe" height="160"></canvas>
+  </div>
+  <div class="card">
+    <h3>Ports les plus actifs</h3>
+    <table class="tbl" id="top"></table>
+  </div>
+</section>
+
+<!-- Ports -->
+<section id="ports" class="tab">
+  <div class="card">
+    <h3>Ports <span class="tools"><button class="btn" id="b-rst">Remettre les compteurs à zéro</button></span></h3>
+    <div class="scroll"><table class="tbl" id="t-ports"></table></div>
+  </div>
+</section>
+
+<!-- VLAN -->
+<section id="vlans" class="tab">
+  <div class="card">
+    <h3>Liste des VLAN <small>les noms servent uniquement à l'affichage</small></h3>
+    <table class="tbl" id="t-vlans"></table>
+    <div class="row"><input id="v-id" type="number" min="1" max="4094" placeholder="ID"><input id="v-name" placeholder="Nom"><button class="btn" id="v-add">Ajouter</button><button class="btn pri" id="v-save">Enregistrer</button></div>
+  </div>
+  <div class="card">
+    <h3>Appartenance des ports</h3>
+    <div class="scroll"><table class="tbl" id="t-vmatrix"></table></div>
+    <p class="hint">U = non étiqueté (VLAN natif) · T = étiqueté (trunk) · – = absent. Pour modifier, configurez le port dans l'onglet Ports.</p>
+  </div>
+</section>
+
+<!-- PoE -->
+<section id="poe" class="tab">
+  <div class="cards">
+    <div class="card kpi"><label>Consommation</label><b id="p-tot">–</b><small>budget 370 W</small></div>
+    <div class="card kpi"><label>Tension</label><b id="p-volt">–</b></div>
+    <div class="card kpi"><label>Température</label><b id="p-temp">–</b></div>
+    <div class="card kpi"><label>Ports alimentés</label><b id="p-n">–</b></div>
+  </div>
+  <div class="card">
+    <h3>Puissance PoE
+      <span class="tools">
+        <select id="pg-port"></select>
+        <select id="pg-range"><option value="10">Dernière heure (10 s)</option><option value="60">24 heures (1 min)</option></select>
+      </span>
+    </h3>
+    <canvas id="c-poe" height="260"></canvas>
+    <p class="hint" id="pg-info"></p>
+  </div>
+  <div class="card"><h3>Ports PoE</h3><div class="scroll"><table class="tbl" id="t-poe"></table></div></div>
+</section>
+
+<!-- Ventilation -->
+<section id="fan" class="tab">
+  <div class="cards">
+    <div class="card kpi"><label>Vitesse actuelle</label><b id="fa-pct">–</b><small id="fa-mode"></small></div>
+    <div class="card kpi"><label>Carte</label><b id="fa-board">–</b><small>capteur TMP411</small></div>
+    <div class="card kpi"><label>Puce de commutation</label><b id="fa-asic">–</b><small>diode distante TMP411</small></div>
+    <div class="card kpi"><label>Contrôleur PoE</label><b id="fa-poe">–</b><small>PD690xx</small></div>
+    <div class="card kpi"><label>Température retenue</label><b id="fa-ref">–</b><small>la plus haute des trois</small></div>
+  </div>
+  <div class="card">
+    <h3>Préréglages <small>cliquez pour charger, puis Appliquer</small></h3>
+    <div class="presets" id="fa-presets"></div>
+  </div>
+  <div class="card">
+    <h3>Courbe de ventilation <small>le point indique la situation actuelle</small></h3>
+    <div class="fan-grid">
+      <div class="form">
+        <label>Mode<select id="f-mode"><option value="auto">Automatique (selon la température)</option><option value="manual">Vitesse fixe</option></select></label>
+        <label class="f-man">Vitesse fixe (%)<input id="f-manual" type="number" min="30" max="100"></label>
+        <label class="f-auto">Vitesse minimale (%)<input id="f-min" type="number" min="30" max="100"></label>
+        <label class="f-auto">Vitesse maximale (%)<input id="f-max" type="number" min="30" max="100"></label>
+        <label class="f-auto">Début de la montée (°C)<input id="f-low" type="number" min="20" max="73"></label>
+        <label class="f-auto">Vitesse maximale atteinte à (°C)<input id="f-high" type="number" min="21" max="74"></label>
+      </div>
+      <canvas id="c-curve" height="240"></canvas>
+    </div>
+    <p class="hint">Sous le début de la montée : vitesse minimale. Entre les deux températures : montée linéaire. Au-delà : vitesse maximale. Le ventilateur ne descend jamais sous 30 % (il calerait). Sécurité permanente : 100 % au-delà de 75 °C ou si un capteur ne répond plus.</p>
+    <div class="row"><button class="btn pri" id="f-save">Appliquer</button><span class="hint" id="f-dirty"></span></div>
+  </div>
+  <div class="card">
+    <h3>Historique
+      <span class="tools"><select id="fa-range"><option value="10">Dernière heure (10 s)</option><option value="60">24 heures (1 min)</option></select></span>
+    </h3>
+    <canvas id="c-fan-t" height="200"></canvas>
+    <canvas id="c-fan-p" height="140"></canvas>
+  </div>
+</section>
+
+<!-- Graphiques -->
+<section id="graphs" class="tab">
+  <div class="card">
+    <h3>Débit par port
+      <span class="tools">
+        <select id="g-port"></select>
+        <select id="g-range"><option value="10">Dernière heure (10 s)</option><option value="60">24 heures (1 min)</option></select>
+      </span>
+    </h3>
+    <canvas id="c-port" height="260"></canvas>
+  </div>
+  <div class="card"><h3>Température PoE et charge CPU <small>24 h</small></h3><canvas id="c-sys" height="200"></canvas></div>
+</section>
+
+<!-- Table MAC -->
+<section id="mac" class="tab">
+  <div class="card">
+    <h3>Adresses MAC apprises <span class="tools"><input id="m-filter" placeholder="Filtrer (MAC, port, VLAN)"><button class="btn" id="m-flush">Vider la table</button></span></h3>
+    <div class="scroll"><table class="tbl" id="t-mac"></table></div>
+  </div>
+</section>
+
+<!-- Diagnostic -->
+<section id="diag" class="tab">
+  <div class="card">
+    <h3>Test de câble (VeriPHY)</h3>
+    <div class="row"><select id="d-port"></select><button class="btn pri" id="d-run">Lancer le test</button><span class="hint">Le lien du port est coupé quelques secondes pendant le test.</span></div>
+    <table class="tbl" id="t-veriphy"></table>
+  </div>
+  <div class="card">
+    <h3>Miroir de port</h3>
+    <div class="form">
+      <label>Port de destination (analyseur)<select id="mi-dest"></select></label>
+      <label>Ports source – trafic entrant<input id="mi-in" placeholder="ex. 1-3,7"></label>
+      <label>Ports source – trafic sortant<input id="mi-out" placeholder="ex. 1-3,7"></label>
+    </div>
+    <button class="btn pri" id="mi-save">Appliquer</button>
+  </div>
+  <div class="card">
+    <h3>Journal <span class="tools"><button class="btn" id="l-ref">Actualiser</button></span></h3>
+    <pre id="log" class="log"></pre>
+  </div>
+</section>
+
+<!-- Système -->
+<section id="system" class="tab">
+  <div class="card">
+    <h3>Informations</h3>
+    <table class="tbl kv" id="t-info"></table>
+  </div>
+  <div class="card">
+    <h3>Réseau d'administration</h3>
+    <div class="form">
+      <label>Nom du switch<input id="s-host"></label>
+      <label>Adressage<select id="s-mode"><option value="dhcp">DHCP</option><option value="static">Adresse fixe</option></select></label>
+      <label>Adresse IP<input id="s-ip"></label>
+      <label>Masque<input id="s-mask"></label>
+      <label>Passerelle<input id="s-gw"></label>
+      <label>DNS<input id="s-dns"></label>
+      <label>VLAN d'administration<input id="s-vlan" type="number" min="1" max="4094"></label>
+    </div>
+    <p class="hint">Le VLAN d'administration est pris en compte au prochain redémarrage. Une adresse fixe erronée peut rendre la page inaccessible : la console série permet toujours de corriger.</p>
+  </div>
+  <div class="card">
+    <h3>Fonctions du switch</h3>
+    <div class="form">
+      <label>Priorité Spanning Tree (RSTP)<select id="s-stp"></select></label>
+      <label class="chk"><input type="checkbox" id="s-lldp"> LLDP (découverte des voisins)</label>
+      <label class="chk"><input type="checkbox" id="s-igmp"> IGMP snooping (multicast)</label>
+    </div>
+    <button class="btn pri" id="s-save">Enregistrer et appliquer</button>
+  </div>
+  <div class="card">
+    <h3>Accès à l'interface</h3>
+    <div class="form">
+      <label>Identifiant<input id="a-user" value="admin"></label>
+      <label>Nouveau mot de passe<input id="a-pw" type="password" autocomplete="new-password"></label>
+      <label>Confirmation<input id="a-pw2" type="password" autocomplete="new-password"></label>
+    </div>
+    <button class="btn pri" id="a-save">Changer le mot de passe</button>
+  </div>
+  <div class="card">
+    <h3>Mise à jour</h3>
+    <table class="tbl kv" id="t-ver"></table>
+    <div class="row">
+      <label class="btn pri">Choisir un paquet de mise à jour (.msu)<input type="file" id="u-file" accept=".msu" hidden></label>
+      <button class="btn" id="u-rollback">Revenir à la version précédente de l'interface</button>
+    </div>
+    <div id="u-info" class="hidden">
+      <table class="tbl kv" id="t-upd"></table>
+      <div class="row"><button class="btn pri" id="u-apply">Installer</button><button class="btn" id="u-cancel">Annuler</button></div>
+    </div>
+    <p class="hint">Le paquet est vérifié (empreintes SHA-256, chemins autorisés, taille du noyau) avant toute installation. La configuration (ports, VLAN, mot de passe) est conservée.</p>
+  </div>
+  <div class="card">
+    <h3>Sauvegarde et maintenance</h3>
+    <div class="row">
+      <a class="btn" href="cgi-bin/api?a=backup">Télécharger la configuration</a>
+      <label class="btn">Restaurer une configuration<input type="file" id="r-file" hidden></label>
+      <button class="btn danger" id="b-reboot">Redémarrer le switch</button>
+    </div>
+    <p class="hint">Bouton reset en façade maintenu 10 secondes : retour à la configuration par défaut (DHCP sur le VLAN 1, identifiant admin / numéro de série, ports par défaut). La LED passe à l'orange puis le switch redémarre.</p>
+  </div>
+</section>
+</main>
+
+<!-- Fenêtre de configuration d'un port -->
+<dialog id="dlg">
+  <form method="dialog" id="f-port">
+    <h3 id="dlg-title">Port</h3>
+    <div class="form">
+      <label>Nom<input name="name" maxlength="32"></label>
+      <label class="chk"><input type="checkbox" name="enabled"> Port activé</label>
+      <label>Vitesse / duplex<select name="speedsel">
+        <option value="aneg">Automatique</option><option value="1Gfdx">1 Gb/s full</option>
+        <option value="100fdx">100 Mb/s full</option><option value="100hdx">100 Mb/s half</option>
+        <option value="10fdx">10 Mb/s full</option><option value="10hdx">10 Mb/s half</option></select></label>
+      <label>Type de port<select name="vlan_mode"><option value="trunk">Trunk (plusieurs VLAN)</option><option value="access">Accès (un seul VLAN)</option></select></label>
+      <label>VLAN natif / d'accès<input name="pvid" type="number" min="1" max="4094"></label>
+      <label class="trunk-only">VLAN autorisés (vide = tous)<input name="vlans" placeholder="ex. 1,10,20-30"></label>
+      <label class="chk poe-only"><input type="checkbox" name="poe"> Alimentation PoE</label>
+      <label class="chk"><input type="checkbox" name="stp"> Spanning Tree (RSTP)</label>
+      <label>Port terminal (edge)<select name="edge"><option value="auto">Automatique</option><option value="yes">Oui</option><option value="no">Non</option></select></label>
+      <label class="chk"><input type="checkbox" name="isolated"> Isolation (ne communique pas avec les autres ports isolés)</label>
+      <label class="chk"><input type="checkbox" name="storm"> Protection contre les tempêtes de broadcast</label>
+    </div>
+    <div class="dlg-info" id="dlg-info"></div>
+    <div class="dlg-dev">
+      <b>Appareils connectés</b>
+      <table class="tbl" id="t-dev"></table>
+    </div>
+    <div class="dlg-chart">
+      <div class="row"><b>Historique du port</b>
+        <select id="dlg-range"><option value="10">Dernière heure (10 s)</option><option value="60">24 heures (1 min)</option></select></div>
+      <canvas id="c-dlg" height="170"></canvas>
+      <canvas id="c-dlg-poe" height="110" class="poe-only"></canvas>
+    </div>
+    <div class="row end">
+      <button type="button" class="btn poe-only" id="dlg-poe-reset">Redémarrer le PoE</button>
+      <button value="cancel" class="btn">Annuler</button>
+      <button type="button" class="btn pri" id="dlg-save">Appliquer</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+#!/bin/sh
+# Collecteur d'historique pour les graphiques de switchui.
+# Chaque ligne : temps rx1 tx1 ... rxN txN poe1 ... poeN poe_total temp charge ventilateur% carte puce
+#   (carte et puce en dixièmes de °C)
+#   h10 : une ligne toutes les 10 s, 360 lignes (1 h)
+#   h60 : une ligne par minute, 1440 lignes (24 h)
+RUN=/tmp/sui
+mkdir -p $RUN
+n=0
+while true; do
+    t=$(date +%s)
+    cnt=$(awk 'NR>1 {printf " %s %s", $2, $7}' /click/sw0_ctrl/port_counters_meraki 2>/dev/null)
+    if grep -q 'MODEL=.*P$' /etc/boardinfo 2>/dev/null; then
+        pd690xx -l 2>/dev/null > $RUN/poe.txt
+        pd690xx -t 2>/dev/null | head -1 > $RUN/temp.txt
+        poe=$(awk 'NR>1 && $1 ~ /^[0-9]+$/ {printf " %s", $NF; s+=$NF} END {printf " %.1f", s}' $RUN/poe.txt)
+        temp=$(awk '{print $1}' $RUN/temp.txt)
+    else
+        poe=""; temp=0
+    fi
+    load=$(cut -d' ' -f1 /proc/loadavg)
+    fan=$(cat $RUN/fan 2>/dev/null); [ -z "$fan" ] && fan="0 0 0 0"
+    set -- $fan
+    line="$t$cnt$poe ${temp:-0} $load $1 $(($2 / 100)) $(($3 / 100))"
+    echo "$line" >> $RUN/h10
+    if [ $((n % 6)) -eq 0 ]; then
+        echo "$line" >> $RUN/h60
+        tail -n 1440 $RUN/h60 > $RUN/h60.tmp && mv $RUN/h60.tmp $RUN/h60
+    fi
+    tail -n 360 $RUN/h10 > $RUN/h10.tmp && mv $RUN/h10.tmp $RUN/h10
+    n=$((n+1))
+    sleep 10
+done
