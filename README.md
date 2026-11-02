@@ -187,7 +187,7 @@ sha256sum release/switch-local-1.5.0.bin
 # f41e8a7f5b70b8268e5817328b1b4937bcaa9c0800511bf5e7eef422d8c86821
 ```
 
-> **Not yet tested on hardware.** This exact image was built from scratch with `./build.sh` and checked offline (RedBoot identical to the one running on the test switch, partition headers, kernel version and structure layouts, files in the system). It has **not** been written to a chip and booted yet. The test switch runs the same kernel and interface, installed step by step. Keep your backup at hand.
+> **Tested on hardware.** This exact image (SHA-256 `f41e8a7f…`) was written to the chip of an MS220-24P and booted: the Meraki modules load automatically, the switch gets its address by DHCP, and the web interface answers about **100 seconds** after power-on, with the default login. Ports, PoE, cooling, SNMP, update packages and SSH were checked on this fresh install.
 
 `release/kernel-3.18.131-meraki.part` is the kernel alone, for an update package (`tools/make-update.sh -k`).
 
