@@ -182,15 +182,15 @@ Tips:
 
 ### Option A: prebuilt image
 
-`release/switch-local-1.5.0.bin.gz` is the image produced by `./build.sh` from this repository (interface 1.5.0, kernel 3.18.131-meraki). Later interface versions are installed on top of it with an update package (see [Updates](#9-updates)). Check it before writing it:
+`release/switch-local-1.6.0.bin.gz` is the full chip image (interface 1.6.0, kernel 3.18.131-meraki). Check it before writing it:
 
 ```sh
-gunzip -k release/switch-local-1.5.0.bin.gz
-sha256sum release/switch-local-1.5.0.bin
-# f41e8a7f5b70b8268e5817328b1b4937bcaa9c0800511bf5e7eef422d8c86821
+gunzip -k release/switch-local-1.6.0.bin.gz
+sha256sum release/switch-local-1.6.0.bin
+# 86dc6d87b99139fd699920777954cbc566cc54b41779de5b6d75a3f5346c1897
 ```
 
-> **Tested on hardware.** This exact image (SHA-256 `f41e8a7f…`) was written to the chip of an MS220-24P and booted: the Meraki modules load automatically, the switch gets its address by DHCP, and the web interface answers about **100 seconds** after power-on, with the default login. Ports, PoE, cooling, SNMP, update packages and SSH were checked on this fresh install.
+> **Tested on hardware.** RedBoot and the kernel in this image are byte for byte those of the previous image (1.5.0), which was written to the chip of an MS220-24P and booted: the Meraki modules load automatically, the switch gets its address by DHCP and the web interface answers about **100 seconds** after power-on with the default login. Only the read-only system changed (interface 1.6.0, LED chaser); that interface runs on the same switch, installed with an update package, including the LED chaser on a full reboot.
 
 `release/kernel-3.18.131-meraki.part` is the kernel alone, for an update package (`tools/make-update.sh -k`).
 

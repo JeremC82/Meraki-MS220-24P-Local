@@ -62,6 +62,8 @@ chmod 755 "$OV/usr/bin/find_hdr" "$OV/usr/share/switchui/bin/"* "$OV/usr/share/s
           "$OV/usr/share/switchui/www/cgi-bin/"* "$OV/etc/init.d/"*
 
 step "6/7 système de fichiers final"
+# script de démarrage de net-snmp retiré : l'agent est lancé par l'interface (réglage SNMP)
+rm -f "$BR/output/target/etc/init.d/S59snmpd"
 make -C "$BR" HOST_CFLAGS="$HOSTFLAGS"
 [ -s "$BR/output/images/rootfs.squashfs" ] || { echo "rootfs.squashfs absent"; exit 1; }
 
