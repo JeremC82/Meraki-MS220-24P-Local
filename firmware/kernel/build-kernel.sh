@@ -14,6 +14,9 @@ set -e
 here=$(cd "$(dirname "$0")" && pwd)
 W=$(mkdir -p "$1" && cd "$1" && pwd); HOST=$(cd "$2" && pwd)
 export PATH="$HOST/bin:$PATH"
+# construction reproductible, sans le nom de la machine ni la date dans « Linux version »
+export KBUILD_BUILD_USER=builder KBUILD_BUILD_HOST=meraki-ms220-local KBUILD_BUILD_VERSION=1
+export KBUILD_BUILD_TIMESTAMP="2023-03-18 00:00:00 UTC"
 command -v mipsel-linux-gcc >/dev/null || { echo "mipsel-linux-gcc introuvable dans $HOST/bin (construire d'abord buildroot)"; exit 1; }
 
 SRC_REPO=https://github.com/halmartin/switch-11-22-ms220.git
